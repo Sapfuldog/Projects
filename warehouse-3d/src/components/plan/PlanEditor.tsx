@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Equipment, Pt, Rack, Warehouse } from '../../types';
+import type { Equipment, Mezzanine, Pt, Rack, Room, Warehouse } from '../../types';
 import { useStore, useWarehouse } from '../../store';
-import { useCells, useFills, warehouseBounds } from '../../lib/derived';
-import { bbox, dist, fmt, localToPlan, pointInPolygon, polygonCentroid, round } from '../../lib/geometry';
-import { RACK_SPEC, rackFootprint, rackLength } from '../../lib/rack';
+import { useMonitor, warehouseBounds } from '../../lib/derived';
+import { bbox, dist, fmt, localToPlan, pointInPolygon, polygonCentroid, rectCorners, round } from '../../lib/geometry';
+import { RACK_SPEC, rackDepth, rackFootprint, rackLength } from '../../lib/rack';
 import { EQUIPMENT } from '../../lib/equipment';
-import { rectCorners } from '../../lib/geometry';
-import { fillColor } from '../../lib/fill';
+import { fillColor } from '../../lib/colors';
+import { ROOM_KINDS } from '../../lib/demo';
+import { FRAME_COLORS } from '../scene/Racks';
+import type { SceneMode } from '../scene/Scene3D';
 
 interface View {
   cx: number;
@@ -22,7 +24,7 @@ type Drag =
   | { kind: 'equip'; id: string; dx: number; dy: number; sx: number; sy: number; moved: boolean }
   | {
       kind: 'shape';
-      target: 'room' | 'zone';
+      target: 'room' | 'zone' | 'mezzanine';
       id: string;
       start: Pt;
       sx: number;
@@ -93,10 +95,10 @@ function RackShape({
   const fp = rackFootprint(r);
   const spec = RACK_SPEC[r.kind];
   const L = rackLength(r) / 1000;
-  const D = r.depth / 1000;
+  const D = rackDepth(r) / 1000;
   const S = r.sectionLength / 1000;
   const U = spec.upright / 1000;
-  const base = r.kind === 'pallet' ? '#1e40af' : '#64748b';
+  const base = r.kind === 'floor' ? '#a16207' : FRAME_COLORS[r.kind].post;
   const sections = [];
   if (heat || scale * S > 6) {
     for (let s = 0; s < r.sections; s++) {
@@ -112,7 +114,7 @@ function RackShape({
         <polygon
           key={s}
           points={corners.map((p) => `${p.x},${p.y}`).join(' ')}
-          fill={h === undefined ? (heat ? '#e2e8f0' : '#dbeafe') : fillColor(h)}
+          fill={h === undefined ? (heat ? '#e2e8f0' : r.kind === 'floor' ? '#fde68a' : '#dbeafe') : fillColor(h)}
           opacity={heat ? 0.95 : 0.55}
           pointerEvents="none"
         />,
@@ -126,7 +128,7 @@ function RackShape({
       <polygon
         points={fp.map((p) => `${p.x},${p.y}`).join(' ')}
         fill={base}
-        fillOpacity={selected ? 0.9 : 0.7}
+        fillOpacity={r.kind === 'floor' ? 0.25 : selected ? 0.9 : 0.7}
         stroke={selected ? '#0ea5e9' : base}
         strokeWidth={selected ? 3 : 1}
         vectorEffect="non-scaling-stroke"
@@ -206,7 +208,63 @@ function EquipShape({
   );
 }
 
-export function PlanEditor() {
+/** Мезонин на плане: пунктирный контур, лестница, число уровней. */
+function MezzShape({
+  m,
+  scale,
+  selected,
+  onDown,
+}: {
+  m: Mezzanine;
+  scale: number;
+  selected: boolean;
+  onDown?: (e: React.PointerEvent) => void;
+}) {
+  const pts = rectCorners(m.x, m.y, m.length, m.width, m.rotation);
+  const sgn = m.stairs === 'end' ? 1 : -1;
+  const stairs = rectCorners(
+    m.x + Math.cos((m.rotation * Math.PI) / 180) * sgn * (m.length / 2 - 1.4),
+    m.y + Math.sin((m.rotation * Math.PI) / 180) * sgn * (m.length / 2 - 1.4),
+    2.6,
+    m.width * 0.5,
+    m.rotation,
+  );
+  return (
+    <g onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
+      <polygon
+        points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
+        fill={m.color}
+        fillOpacity={selected ? 0.22 : 0.08}
+        stroke={selected ? '#0ea5e9' : m.color}
+        strokeWidth={selected ? 3 : 2}
+        strokeDasharray="8 4"
+        vectorEffect="non-scaling-stroke"
+      />
+      <polygon
+        points={stairs.map((p) => `${p.x},${p.y}`).join(' ')}
+        fill="#f2c94c"
+        fillOpacity={0.6}
+        pointerEvents="none"
+      />
+      {m.length * scale > 60 && (
+        <text
+          x={m.x}
+          y={m.y - m.width / 2 + 14 / scale}
+          fontSize={12 / scale}
+          textAnchor="middle"
+          className="plan-zone-label"
+          pointerEvents="none"
+        >
+          {m.name} · {m.levels + 1} ур.
+        </text>
+      )}
+    </g>
+  );
+}
+
+const roomStroke = (r: Room) => (r.hazard ? '#e5484d' : r.color);
+
+export function PlanEditor({ mode = 'build' }: { mode?: SceneMode }) {
   const w = useWarehouse();
   const step = useStore((s) => s.step);
   const section = useStore((s) => s.section);
@@ -214,7 +272,9 @@ export function PlanEditor() {
   const selection = useStore((s) => s.selection);
   const draw = useStore((s) => s.draw);
   const snap = useStore((s) => s.snap);
+  const floorFilter = useStore((s) => s.floorFilter);
   const st = useStore.getState;
+  const build = mode === 'build';
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -398,19 +458,18 @@ export function PlanEditor() {
     else st().updateZone(id, { points: pts });
   };
 
-  // Тепловая карта секций для режима заполнения
-  const { cells } = useCells();
-  const fills = useFills();
-  const showHeat = step === 'fill' || step === 'connect';
+  // Тепловая карта секций: средняя заполненность (в мониторинге)
+  const m = useMonitor();
+  const showHeat = !build || step === 'cells';
   const heat = useMemo(() => {
-    if (!showHeat) return null;
+    if (!showHeat || !m) return null;
     const acc = new Map<string, { sum: number[]; n: number[] }>();
-    for (const c of cells) {
-      if (c.blocked) continue;
+    for (const c of m.idx.cells) {
+      if (c.blocked || !c.rackId) continue;
       let a = acc.get(c.rackId);
       if (!a) acc.set(c.rackId, (a = { sum: [], n: [] }));
       const i = c.section - 1;
-      a.sum[i] = (a.sum[i] ?? 0) + (fills[c.address]?.fill ?? 0);
+      a.sum[i] = (a.sum[i] ?? 0) + (m.fill.get(c.address) ?? 0);
       a.n[i] = (a.n[i] ?? 0) + 1;
     }
     const out = new Map<string, number[]>();
@@ -421,7 +480,12 @@ export function PlanEditor() {
       ),
     );
     return out;
-  }, [showHeat, cells, fills]);
+  }, [showHeat, m]);
+
+  // Без выбранного этажа план показывает нижний этаж, верхние — полупрозрачно
+  const firstFloor = w ? [...w.floors].sort((a, b) => a.elevation - b.elevation)[0]?.id : undefined;
+  const onFloor = (r?: Room) =>
+    floorFilter ? !r || r.floorId === floorFilter : !r || !r.floorId || r.floorId === firstFloor;
 
   if (!w) return <div className="plan-wrap" ref={wrapRef} />;
 
@@ -460,14 +524,17 @@ export function PlanEditor() {
     );
   }
 
-  const roomsInteractive = !draw && (step === 'rooms' || step === 'objects');
-  const zonesInteractive = !draw && step === 'zones';
-  const racksInteractive = !draw && (step === 'racks' || step === 'cells' || step === 'fill' || step === 'connect');
+  const roomsInteractive = !draw && (!build || step === 'rooms');
+  const zonesInteractive = build && !draw && step === 'zones';
+  const racksInteractive = !draw && (!build || step === 'racks' || step === 'cells' || step === 'mezzanine');
+  const mezzInteractive = build && !draw && step === 'mezzanine';
   const selRoom = selection?.kind === 'room' ? w.rooms.find((r) => r.id === selection.id) : undefined;
   const selZone = selection?.kind === 'zone' ? w.zones.find((z) => z.id === selection.id) : undefined;
   const selRackId =
     selection?.kind === 'rack' ? selection.id : selection?.kind === 'cell' ? selection.rackId : undefined;
+  const roomOfZone = new Map(w.zones.map((z) => [z.id, w.rooms.find((r) => r.id === z.roomId)]));
   const editShape =
+    build &&
     !draw &&
     (selRoom && step === 'rooms'
       ? { target: 'room' as const, item: selRoom }
@@ -519,25 +586,41 @@ export function PlanEditor() {
           pointerEvents="none"
         />
 
+        <defs>
+          <pattern id="hatch-yard" width="1.2" height="1.2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="1.2" stroke="#94a3b8" strokeWidth="0.12" />
+          </pattern>
+        </defs>
         {/* Помещения */}
         {w.rooms.map((r) => {
           const sel = selRoom?.id === r.id;
+          const here = onFloor(r);
+          const kind = ROOM_KINDS[r.kind];
           return (
-            <g key={r.id}>
+            <g key={r.id} opacity={here ? 1 : 0.25}>
+              {r.kind === 'yard' && (
+                <polygon
+                  points={r.points.map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill="url(#hatch-yard)"
+                  pointerEvents="none"
+                />
+              )}
               <polygon
                 points={r.points.map((p) => `${p.x},${p.y}`).join(' ')}
                 fill={r.color}
-                fillOpacity={sel ? 0.18 : 0.08}
-                stroke={sel ? '#2563eb' : r.color}
-                strokeWidth={sel ? 3 : 2}
+                fillOpacity={sel ? 0.2 : r.kind === 'yard' ? 0.04 : 0.09}
+                stroke={sel ? '#2563eb' : roomStroke(r)}
+                strokeWidth={sel ? 3 : kind.walls ? 3 : 2}
+                strokeDasharray={kind.walls ? undefined : r.fence ? '2 3' : '10 5'}
                 vectorEffect="non-scaling-stroke"
-                pointerEvents={roomsInteractive ? 'all' : 'none'}
-                style={{ cursor: roomsInteractive ? (sel ? 'move' : 'pointer') : undefined }}
+                pointerEvents={roomsInteractive && here ? 'all' : 'none'}
+                style={{ cursor: roomsInteractive ? (sel && build ? 'move' : 'pointer') : undefined }}
                 onPointerDown={(e) => {
                   if (!roomsInteractive || e.button !== 0) return;
                   e.stopPropagation();
                   st().select({ kind: 'room', id: r.id });
-                  if (step === 'rooms') {
+                  if (!build) st().setDashRoom(r.id);
+                  if (build && step === 'rooms') {
                     drag.current = {
                       kind: 'shape',
                       target: 'room',
@@ -559,6 +642,7 @@ export function PlanEditor() {
         {/* Зоны */}
         {w.zones.map((z) => {
           const sel = selZone?.id === z.id;
+          if (!onFloor(roomOfZone.get(z.id))) return null;
           return (
             <g key={z.id}>
               <polygon
@@ -592,38 +676,75 @@ export function PlanEditor() {
           );
         })}
 
-        {/* Стеллажи */}
-        {w.racks.map((r) => (
-          <RackShape
-            key={r.id}
-            r={r}
-            scale={view.scale}
-            selected={selRackId === r.id}
-            heat={heat?.get(r.id)}
-            onDown={
-              racksInteractive
-                ? (e) => {
-                    if (e.button !== 0) return;
-                    e.stopPropagation();
-                    st().select({ kind: 'rack', id: r.id });
-                    if (step === 'racks') {
-                      const p = toWorld(e.clientX, e.clientY);
+        {/* Мезонины */}
+        {w.mezzanines.map((mz) =>
+          onFloor(roomOfZone.get(mz.zoneId)) ? (
+            <MezzShape
+              key={mz.id}
+              m={mz}
+              scale={view.scale}
+              selected={selection?.kind === 'mezzanine' && selection.id === mz.id}
+              onDown={
+                mezzInteractive
+                  ? (e) => {
+                      if (e.button !== 0) return;
+                      e.stopPropagation();
+                      st().select({ kind: 'mezzanine', id: mz.id });
                       drag.current = {
-                        kind: 'rack',
-                        id: r.id,
-                        dx: p.x - r.x,
-                        dy: p.y - r.y,
+                        kind: 'shape',
+                        target: 'mezzanine',
+                        id: mz.id,
+                        start: toWorld(e.clientX, e.clientY),
                         sx: e.clientX,
                         sy: e.clientY,
+                        orig: w,
                         moved: false,
                       };
                       svgRef.current?.setPointerCapture(e.pointerId);
                     }
-                  }
-                : undefined
-            }
-          />
-        ))}
+                  : undefined
+              }
+            />
+          ) : null,
+        )}
+
+        {/* Стеллажи */}
+        {w.racks.map((r) => {
+          if (!onFloor(roomOfZone.get(r.zoneId))) return null;
+          // На мезонине показываем только нижний уровень, чтобы стеллажи уровней не накладывались
+          if (r.mezzanineId && (r.deck ?? 1) > 0 && !(selRackId === r.id) && step !== 'mezzanine') return null;
+          return (
+            <RackShape
+              key={r.id}
+              r={r}
+              scale={view.scale}
+              selected={selRackId === r.id}
+              heat={heat?.get(r.id)}
+              onDown={
+                racksInteractive
+                  ? (e) => {
+                      if (e.button !== 0) return;
+                      e.stopPropagation();
+                      st().select({ kind: 'rack', id: r.id });
+                      if (build && step === 'racks') {
+                        const p = toWorld(e.clientX, e.clientY);
+                        drag.current = {
+                          kind: 'rack',
+                          id: r.id,
+                          dx: p.x - r.x,
+                          dy: p.y - r.y,
+                          sx: e.clientX,
+                          sy: e.clientY,
+                          moved: false,
+                        };
+                        svgRef.current?.setPointerCapture(e.pointerId);
+                      }
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
 
         {/* Оборудование и элементы здания */}
         {w.equipment.map((eq) => (
@@ -639,7 +760,7 @@ export function PlanEditor() {
                     if (ev.button !== 0) return;
                     ev.stopPropagation();
                     st().select({ kind: 'equipment', id: eq.id });
-                    if (section === 'warehouse') {
+                    if (build && section === 'warehouse') {
                       const p = toWorld(ev.clientX, ev.clientY);
                       drag.current = {
                         kind: 'equip',
@@ -676,6 +797,7 @@ export function PlanEditor() {
         {/* Подписи и размеры — поверх стеллажей */}
         <g pointerEvents="none">
           {w.rooms.map((r) => {
+            if (!onFloor(r)) return null;
             const p = roomLabelPoint(r.points);
             return (
               <g key={r.id}>
@@ -689,7 +811,7 @@ export function PlanEditor() {
                 >
                   {r.name}
                 </text>
-                {(selRoom?.id === r.id || step === 'rooms') && (
+                {(selRoom?.id === r.id || (build && step === 'rooms')) && (
                   <EdgeLabels
                     points={r.points}
                     scale={view.scale}
@@ -701,7 +823,8 @@ export function PlanEditor() {
           })}
           {w.zones.map((z) => {
             const sel = selZone?.id === z.id;
-            if (step !== 'zones' && !sel) return null;
+            if ((step !== 'zones' || !build) && !sel) return null;
+            if (!onFloor(roomOfZone.get(z.id))) return null;
             const c = polygonCentroid(z.points);
             return (
               <g key={z.id}>

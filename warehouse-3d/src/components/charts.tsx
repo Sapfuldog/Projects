@@ -313,3 +313,227 @@ export function Columns({
     </div>
   );
 }
+
+// ---------- Горизонтальные полосы (заполнение по помещениям, нагрузка стеллажей) ----------
+
+export interface HBarItem {
+  key: string;
+  label: string;
+  sub?: string;
+  /** Доля 0..1 (может быть больше 1 — перегруз) */
+  value: number;
+  display: string;
+  color?: string;
+  onClick?: () => void;
+}
+
+export function HBars({ items, limit = false }: { items: HBarItem[]; limit?: boolean }) {
+  return (
+    <div className="hbars">
+      {items.map((it) => (
+        <button
+          key={it.key}
+          className={`hbar ${it.onClick ? 'clickable' : ''}`}
+          onClick={it.onClick}
+          disabled={!it.onClick}
+        >
+          <span className="hbar-label">
+            <b>{it.label}</b>
+            {it.sub && <em>{it.sub}</em>}
+          </span>
+          <span className="hbar-track">
+            <i
+              style={{
+                width: `${Math.min(100, Math.max(0, it.value) * 100)}%`,
+                background: it.color ?? 'var(--series-1)',
+              }}
+            />
+            {limit && <u />}
+          </span>
+          <span className="hbar-value">{it.display}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Мини-график ----------
+
+export function Sparkline({
+  values,
+  width = 120,
+  height = 32,
+  color = 'var(--series-1)',
+}: {
+  values: number[];
+  width?: number;
+  height?: number;
+  color?: string;
+}) {
+  if (values.length < 2) return <svg width={width} height={height} aria-hidden />;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const k = max - min || 1;
+  const pts = values.map(
+    (v, i) => `${(i / (values.length - 1)) * (width - 4) + 2},${height - 3 - ((v - min) / k) * (height - 6)}`,
+  );
+  return (
+    <svg width={width} height={height} className="sparkline" aria-hidden>
+      <polyline
+        points={`2,${height - 2} ${pts.join(' ')} ${width - 2},${height - 2}`}
+        fill={color}
+        opacity={0.12}
+        stroke="none"
+      />
+      <polyline
+        points={pts.join(' ')}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// ---------- Гистограмма ----------
+
+export function Histogram({
+  values,
+  labels,
+  colors,
+  height = 150,
+}: {
+  values: number[];
+  labels: string[];
+  colors?: string[];
+  height?: number;
+}) {
+  const max = Math.max(1, ...values);
+  return (
+    <div className="histogram" style={{ height }}>
+      {values.map((v, i) => (
+        <div key={labels[i]} className="hist-col" title={`${labels[i]}: ${v.toLocaleString('ru-RU')}`}>
+          <span className="hist-val">{v.toLocaleString('ru-RU')}</span>
+          <span className="hist-bar">
+            <i style={{ height: `${(v / max) * 100}%`, background: colors?.[i] ?? 'var(--series-1)' }} />
+          </span>
+          <span className="hist-label">{labels[i]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Несколько линий ----------
+
+export function Lines({
+  series,
+  height = 220,
+  format = (v: number) => v.toLocaleString('ru-RU'),
+  max: fixedMax,
+}: {
+  series: { label: string; color: string; points: { x: number; y: number }[] }[];
+  height?: number;
+  format?: (v: number) => string;
+  max?: number;
+}) {
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const [hi, setHi] = useState<number | null>(null);
+  const pad = { l: 48, r: 16, t: 14, b: 26 };
+  const W = Math.max(200, width);
+  const iw = W - pad.l - pad.r;
+  const ih = height - pad.t - pad.b;
+  const n = Math.max(...series.map((s) => s.points.length), 1);
+  const maxY = fixedMax ?? Math.max(1, ...series.flatMap((s) => s.points.map((p) => p.y)));
+  const ticks = niceTicks(maxY);
+  const top = fixedMax ?? ticks[ticks.length - 1];
+  const x = (i: number) => pad.l + (n > 1 ? (i / (n - 1)) * iw : iw / 2);
+  const y = (v: number) => pad.t + ih - (v / (top || 1)) * ih;
+  const base = series[0]?.points ?? [];
+  const fmtDay = (t: number) => new Date(t).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  return (
+    <div className="chart" ref={ref}>
+      <div className="chart-legend">
+        {series.map((s) => (
+          <span key={s.label}>
+            <i style={{ background: s.color }} />
+            {s.label}
+          </span>
+        ))}
+      </div>
+      {width > 0 && (
+        <svg
+          width={W}
+          height={height}
+          role="img"
+          aria-label={series.map((s) => s.label).join(', ')}
+          onMouseMove={(e) => {
+            const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+            const i = Math.round(((e.clientX - r.left - pad.l) / iw) * (n - 1));
+            setHi(Math.max(0, Math.min(n - 1, i)));
+          }}
+          onMouseLeave={() => setHi(null)}
+        >
+          {(fixedMax ? [0, fixedMax / 4, fixedMax / 2, (fixedMax * 3) / 4, fixedMax] : ticks).map((t) => (
+            <g key={t}>
+              <line x1={pad.l} x2={W - pad.r} y1={y(t)} y2={y(t)} className="grid-line" />
+              <text x={pad.l - 8} y={y(t)} className="axis-text" textAnchor="end" dominantBaseline="middle">
+                {format(t)}
+              </text>
+            </g>
+          ))}
+          {base.map((p, i) =>
+            i % Math.ceil(n / 6) === 0 || i === n - 1 ? (
+              <text key={i} x={x(i)} y={height - 6} className="axis-text" textAnchor="middle">
+                {fmtDay(p.x)}
+              </text>
+            ) : null,
+          )}
+          {series.map((s) => (
+            <path
+              key={s.label}
+              d={s.points.map((p, i) => `${i ? 'L' : 'M'} ${x(i)} ${y(p.y)}`).join(' ')}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={2}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          ))}
+          {hi !== null && (
+            <>
+              <line x1={x(hi)} x2={x(hi)} y1={pad.t} y2={pad.t + ih} className="crosshair" />
+              {series.map(
+                (s) =>
+                  s.points[hi] && (
+                    <circle
+                      key={s.label}
+                      cx={x(hi)}
+                      cy={y(s.points[hi].y)}
+                      r={4}
+                      fill={s.color}
+                      stroke="var(--surface)"
+                      strokeWidth={2}
+                    />
+                  ),
+              )}
+            </>
+          )}
+        </svg>
+      )}
+      {hi !== null && base[hi] && (
+        <Tooltip x={x(hi)} y={pad.t + 10} width={W}>
+          <b>{new Date(base[hi].x).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</b>
+          {series.map((s) => (
+            <span key={s.label}>
+              <i style={{ background: s.color }} />
+              {s.label}: {s.points[hi] ? format(s.points[hi].y) : '—'}
+            </span>
+          ))}
+        </Tooltip>
+      )}
+    </div>
+  );
+}

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useStore, useWarehouse } from '../../store';
 import { bbox, fmt, insetRect, polygonArea, polygonInside, selfIntersects } from '../../lib/geometry';
-import type { Pt } from '../../types';
+import type { MaterialGroup, Pt, ZoneType } from '../../types';
 import { ZONE_TYPES } from '../../lib/demo';
+import { GROUPS } from '../../lib/materials';
 import { rackHeight } from '../../lib/rack';
-import type { ZoneType } from '../../types';
-import { ColorField, Hint, Num, Section, Select, Text, Warn } from '../ui';
+import { Check, ColorField, Hint, Num, Section, Select, Text, Warn } from '../ui';
 import { Tile } from './EquipmentPanel';
 import { VerticesEditor } from './VerticesEditor';
 
@@ -15,15 +15,6 @@ function defaultZoneShape(points: Pt[]): Pt[] {
   const isRect = points.length === 4 && Math.abs((b.maxX - b.minX) * (b.maxY - b.minY) - polygonArea(points)) < 0.01;
   return isRect ? insetRect(points, 1) : points.map((p) => ({ ...p }));
 }
-
-const ZONE_TYPE_COLORS: Record<ZoneType, string> = {
-  rack: '#3b82f6',
-  floor: '#14b8a6',
-  receiving: '#f59e0b',
-  shipping: '#ef4444',
-  buffer: '#06b6d4',
-  other: '#94a3b8',
-};
 
 export function ZonesPanel() {
   const w = useWarehouse();
@@ -53,34 +44,46 @@ export function ZonesPanel() {
     if (!polygonInside(zone.points, room.points, 0.05)) warnings.push('Зона выходит за границы помещения');
     if (zone.height > room.height) warnings.push(`Высота зоны больше высоты помещения (${room.height} м)`);
     if (selfIntersects(zone.points)) warnings.push('Контур пересекает сам себя');
-    const tall = w.racks.filter((r) => r.zoneId === zone.id && rackHeight(r) / 1000 > zone.height + 1e-6);
+    const tall = w.racks.filter(
+      (r) => r.zoneId === zone.id && !r.mezzanineId && rackHeight(r) / 1000 > zone.height + 1e-6,
+    );
     if (tall.length) warnings.push(`Стеллажи выше зоны: ${tall.map((r) => r.code).join(', ')}`);
   }
+  const toggleGroup = (g: MaterialGroup) => {
+    if (!zone) return;
+    const cur = zone.groups ?? [];
+    const next = cur.includes(g) ? cur.filter((x) => x !== g) : [...cur, g];
+    st().updateZone(zone.id, { groups: next.length ? next : undefined });
+  };
 
   return (
     <>
       <Section title="Зоны размещения">
         <Hint>
-          Зона — участок помещения с одним типом хранения и <b>предельной высотой размещения</b> (например, под фермами,
-          спринклерами или кран-балкой). Высота зоны ограничивает высоту стеллажей.
+          Зона — участок помещения с одним назначением и <b>предельной высотой размещения</b> (под фермами,
+          спринклерами, кран-балкой). Для зон ЛВЖ и баллонов действуют свои правила контроля; можно задать, какие группы
+          ТМЦ в зоне допустимы.
         </Hint>
         <Select
           label="Добавить в помещение"
           value={targetRoom?.id ?? ''}
           onChange={setRoomId}
-          options={w.rooms.map((r) => ({ value: r.id, label: r.name }))}
+          options={w.rooms.map((r) => ({
+            value: r.id,
+            label: `${r.name} · ${w.floors.find((f) => f.id === r.floorId)?.name ?? ''}`,
+          }))}
         />
         <div className="tiles">
           {(Object.keys(ZONE_TYPES) as ZoneType[]).map((t) => (
             <Tile
               key={t}
               art="zone"
-              title={ZONE_TYPES[t]}
+              title={ZONE_TYPES[t].title}
               onClick={() => {
                 if (!targetRoom) return;
-                const id = st().addZone(targetRoom.id, defaultZoneShape(targetRoom.points));
+                const id = st().addZone(targetRoom.id, defaultZoneShape(targetRoom.points), t);
                 const n = w.zones.length + 1;
-                st().updateZone(id, { type: t, name: `${ZONE_TYPES[t]} ${n}`, color: ZONE_TYPE_COLORS[t] }, false);
+                st().updateZone(id, { name: `${ZONE_TYPES[t].title} ${n}`, code: `Z${n}` }, false);
               }}
             />
           ))}
@@ -109,7 +112,7 @@ export function ZonesPanel() {
                   <span className="swatch" style={{ background: z.color }} />
                   <span className="grow">
                     {z.name} <span className="muted">({z.code})</span>
-                    <div className="muted small">{ZONE_TYPES[z.type]}</div>
+                    <div className="muted small">{ZONE_TYPES[z.type].title}</div>
                   </span>
                   <span className="muted small">
                     {fmt(polygonArea(z.points), 0)} м² · ≤ {z.height} м
@@ -129,7 +132,7 @@ export function ZonesPanel() {
               className="btn small danger"
               onClick={() =>
                 st().ask(
-                  `Удалить зону «${zone.name}» и её стеллажи?`,
+                  `Удалить зону «${zone.name}» с её стеллажами и мезонинами?`,
                   () => (st().deleteZone(zone.id), st().select(null)),
                 )
               }
@@ -142,13 +145,13 @@ export function ZonesPanel() {
             <Text label="Название" value={zone.name} onChange={(v) => st().updateZone(zone.id, { name: v })} />
             <Text label="Код (для адреса)" value={zone.code} onChange={(v) => st().updateZone(zone.id, { code: v })} />
             <Select<ZoneType>
-              label="Тип зоны"
+              label="Назначение"
               value={zone.type}
-              onChange={(v) => st().updateZone(zone.id, { type: v })}
-              options={Object.entries(ZONE_TYPES).map(([value, label]) => ({ value: value as ZoneType, label }))}
+              onChange={(v) => st().updateZone(zone.id, { type: v, hazard: v === 'hazard' ? true : zone.hazard })}
+              options={(Object.keys(ZONE_TYPES) as ZoneType[]).map((t) => ({ value: t, label: ZONE_TYPES[t].title }))}
             />
             <Num
-              label={<b>Высота зоны размещения</b>}
+              label={<b>Предельная высота размещения</b>}
               unit="м"
               value={zone.height}
               min={0.1}
@@ -161,8 +164,35 @@ export function ZonesPanel() {
               onChange={(v) => st().updateZone(zone.id, { roomId: v })}
               options={w.rooms.map((r) => ({ value: r.id, label: r.name }))}
             />
+            <Text
+              label="Температурный режим"
+              value={zone.temp ?? ''}
+              onChange={(v) => st().updateZone(zone.id, { temp: v || undefined })}
+            />
             <ColorField label="Цвет" value={zone.color} onChange={(v) => st().updateZone(zone.id, { color: v })} />
+            <div className="field">
+              <span className="field-label">&nbsp;</span>
+              <Check
+                label="Зона ЛВЖ / опасных грузов"
+                checked={!!zone.hazard}
+                onChange={(v) => st().updateZone(zone.id, { hazard: v || undefined })}
+              />
+            </div>
           </div>
+          <h4>Допустимые группы ТМЦ</h4>
+          <div className="chips">
+            {(Object.keys(GROUPS) as MaterialGroup[]).map((g) => (
+              <button
+                key={g}
+                className={`chip ${zone.groups?.includes(g) ? 'active' : ''}`}
+                onClick={() => toggleGroup(g)}
+              >
+                <i className="dot" style={{ background: GROUPS[g].color }} />
+                {GROUPS[g].short}
+              </button>
+            ))}
+          </div>
+          <Hint>Пусто — любые группы. Иначе ТМЦ других групп в зоне попадут в «Контроль».</Hint>
           <div className="metrics">
             <span>
               Площадь: <b>{fmt(polygonArea(zone.points))} м²</b>

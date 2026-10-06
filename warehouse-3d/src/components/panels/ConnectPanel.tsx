@@ -1,323 +1,278 @@
 import { useRef, useState } from 'react';
 import { useStore, useWarehouse } from '../../store';
 import type { ConnectionType, FieldMapping } from '../../types';
-import { applyRows, fetchRows, parsePayload, pushStructure, structurePayload } from '../../lib/connectors';
-import { useCells } from '../../lib/derived';
-import { extractRows, toCSV } from '../../lib/fill';
-import { Hint, Num, Section, Text, download } from '../ui';
+import { cellsOf } from '../../lib/monitor';
+import { useInventory, useProductsMap, useTareMap } from '../../lib/derived';
+import { SNAPSHOT_FIELDS, extractRows, parsePayload, snapshotRows, structurePayload, toCSV } from '../../lib/snapshot';
+import { applyRows, fetchRows, pushStructure } from '../../lib/connectors';
+import { timeAgo } from '../../lib/analytics';
+import { Check, Hint, Num, Section, Text, download } from '../ui';
+import { Icon } from '../icons';
 
-const TYPES: { value: ConnectionType; title: string; desc: string }[] = [
-  { value: 'internal', title: 'Внутренний учёт', desc: 'Остатки, поставки и заказы в этом приложении' },
-  { value: 'none', title: 'Нет', desc: 'Только структура склада' },
-  { value: 'demo', title: 'Демо-симулятор', desc: 'Случайное заполнение для проверки' },
-  { value: 'rest', title: 'REST API', desc: 'Опрос WMS / 1С / БД по HTTP' },
-  { value: 'ws', title: 'WebSocket', desc: 'Изменения в реальном времени' },
-  { value: 'file', title: 'Файл', desc: 'CSV из Excel или JSON' },
+const TYPES: { value: ConnectionType; title: string; hint: string }[] = [
+  { value: 'none', title: 'Нет', hint: 'Данные не обновляются' },
+  { value: 'demo', title: 'Демо-поток', hint: 'Имитация учётной системы: выдача, приход, баллоны' },
+  { value: 'rest', title: 'REST API', hint: 'Опрос среза остатков (JSON или CSV)' },
+  { value: 'ws', title: 'WebSocket', hint: 'Изменения по ячейкам в реальном времени' },
+  { value: 'file', title: 'Файл', hint: 'Выгрузка из 1С/WMS: CSV или JSON' },
 ];
 
-const MAPPING_FIELDS: { key: keyof FieldMapping; label: string; hint: string }[] = [
-  { key: 'address', label: 'Адрес ячейки*', hint: 'обязательно' },
-  { key: 'fill', label: 'Заполненность', hint: '0..1 или 0..100 %' },
-  { key: 'qty', label: 'Количество', hint: 'если нет заполненности' },
-  { key: 'capacity', label: 'Вместимость', hint: 'заполн. = кол-во / вместимость' },
-  { key: 'weight', label: 'Вес, кг', hint: 'сравнивается с Г' },
-  { key: 'sku', label: 'Артикул / SKU', hint: '' },
-  { key: 'name', label: 'Наименование', hint: '' },
-];
-
-const SAMPLE = `{
-  "items": [
-    { "address": "A-01-01-01", "fill": 0.8, "weight": 640, "sku": "12345", "name": "Вода 0,5л" },
-    { "address": "A-01-02-03", "qty": 12, "capacity": 40, "weight": 210 }
-  ]
-}`;
-
-function timeAgo(ts: number) {
-  const s = Math.round((Date.now() - ts) / 1000);
-  if (s < 60) return `${s} с назад`;
-  if (s < 3600) return `${Math.round(s / 60)} мин назад`;
-  return new Date(ts).toLocaleString('ru-RU');
-}
-
+/** Подключение к учётной системе: тип источника, сопоставление полей, проверка, выгрузка структуры. */
 export function ConnectPanel() {
   const w = useWarehouse();
+  const inv = useInventory();
+  const products = useProductsMap();
+  const tare = useTareMap();
   const sync = useStore((s) => (s.currentId ? s.sync[s.currentId] : undefined));
-  const hasFills = useStore((s) => !!(s.currentId && s.fills[s.currentId]));
-  const { cells } = useCells();
   const st = useStore.getState;
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
+  const [preview, setPreview] = useState<Record<string, unknown>[] | null>(null);
   if (!w) return null;
   const c = w.connection;
   const up = st().updateConnection;
+  const setMap = (k: keyof FieldMapping, v: string) => up({ mapping: { ...c.mapping, [k]: v } });
+
+  const runFile = async (f: File) => {
+    try {
+      const rows = extractRows(parsePayload(await f.text()), c.path);
+      if (!rows.length) throw new Error('В файле нет записей');
+      const r = applyRows(w, rows, `Файл ${f.name}`, true);
+      st().toast(
+        `Срез принят: записей ${r.received}, ячеек ${r.matched}${r.unmatched.length ? `, не найдено адресов ${r.unmatched.length}` : ''}`,
+      );
+      setPreview(rows.slice(0, 5));
+    } catch (e) {
+      st().toast(`Не удалось прочитать файл: ${e instanceof Error ? e.message : e}`, 'error');
+    }
+  };
 
   const testRest = async () => {
     setBusy(true);
-    setMsg('');
     try {
       const rows = await fetchRows(c);
+      setPreview(rows.slice(0, 5));
       const r = applyRows(w, rows, `REST ${c.url}`, true);
-      setMsg(`Получено записей: ${r.received}, сопоставлено ячеек: ${r.matched}`);
+      st().toast(`Получено записей: ${r.received}, сопоставлено ячеек: ${r.matched}`);
     } catch (e) {
-      setMsg(`Ошибка: ${e instanceof Error ? e.message : e}. Проверьте адрес и разрешение CORS на сервере.`);
+      st().toast(`Ошибка запроса: ${e instanceof Error ? e.message : e}`, 'error');
     } finally {
       setBusy(false);
     }
   };
-
-  const loadFile = async (f: File) => {
-    try {
-      const rows = extractRows(parsePayload(await f.text()), c.path);
-      const r = applyRows(w, rows, `Файл ${f.name}`, true);
-      setMsg(`Файл «${f.name}»: записей ${r.received}, сопоставлено ячеек ${r.matched}`);
-    } catch (e) {
-      setMsg(`Ошибка чтения файла: ${e instanceof Error ? e.message : e}`);
-    }
-  };
-
-  const push = async () => {
-    setBusy(true);
-    try {
-      const n = await pushStructure(w);
-      setMsg(`Структура отправлена: ${n} ячеек`);
-    } catch (e) {
-      setMsg(`Ошибка отправки: ${e instanceof Error ? e.message : e}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const templateCSV = () =>
-    download(
-      `шаблон_заполнения_${w.name}.csv`,
-      toCSV(
-        [
-          c.mapping.address || 'address',
-          c.mapping.fill || 'fill',
-          c.mapping.weight || 'weight',
-          c.mapping.sku || 'sku',
-          c.mapping.name || 'name',
-        ],
-        cells.slice(0, 5000).map((x) => [x.address, '', '', '', '']),
-      ),
-      'text/csv;charset=utf-8',
-    );
 
   return (
     <>
-      <Section title="Источник данных о заполнении">
+      <Section title="Источник данных">
+        <Hint>
+          Приложение не ведёт учёт: остатки, партии и движения приходят из учётной системы (1С:УПП/ERP, WMS). Здесь
+          настраивается, откуда брать срез остатков по ячейкам.
+        </Hint>
         <div className="type-grid">
           {TYPES.map((t) => (
             <button
               key={t.value}
               className={`type-card ${c.type === t.value ? 'active' : ''}`}
-              onClick={() => up({ type: t.value, active: t.value === 'demo' ? true : false })}
+              onClick={() => up({ type: t.value, active: t.value === 'demo' })}
             >
               <b>{t.title}</b>
-              <span>{t.desc}</span>
+              <span>{t.hint}</span>
             </button>
           ))}
         </div>
-
-        {c.type === 'internal' && (
-          <div className="note">
-            Заполнение ячеек считается по остаткам из разделов «Поставки», «Заказы» и «Остатки»: объём товара
-            относительно объёма ячейки (Д×Ш×В), вес — относительно Г.
-          </div>
-        )}
         {c.type === 'demo' && (
           <>
             <div className="grid2">
               <Num
-                label="Средняя заполненность"
-                unit="%"
-                value={Math.round(c.demoTarget * 100)}
-                min={0}
-                max={100}
-                onChange={(v) => up({ demoTarget: v / 100 })}
-              />
-              <Num
-                label="Обновлять каждые"
+                label="Период обновления"
                 unit="с"
                 value={c.demoInterval}
                 min={1}
-                max={600}
+                max={120}
                 onChange={(v) => up({ demoInterval: v })}
               />
+              <div className="field">
+                <span className="field-label">&nbsp;</span>
+                <Check label="Поток включён" checked={c.active} onChange={(v) => up({ active: v })} />
+              </div>
             </div>
-            <div className="row">
-              <button className={`btn ${c.active ? 'active' : 'primary'}`} onClick={() => up({ active: !c.active })}>
-                {c.active ? '■ Остановить' : '▶ Запустить'}
+            <div className="row wrap">
+              <button
+                className="btn small"
+                onClick={() =>
+                  st().ask(
+                    'Пересоздать демо-срез остатков? Текущие остатки склада будут заменены.',
+                    () => st().resetDemoData(w.id),
+                    'Пересоздать',
+                    false,
+                  )
+                }
+              >
+                <Icon name="refresh" size={15} /> Пересоздать демо-срез
+              </button>
+              <button
+                className="btn small danger"
+                onClick={() => st().ask('Очистить остатки склада?', () => st().clearInventory(w.id), 'Очистить')}
+              >
+                Очистить остатки
               </button>
             </div>
           </>
         )}
-
         {(c.type === 'rest' || c.type === 'ws') && (
           <>
             <Text
-              label={c.type === 'rest' ? 'URL (GET, JSON или CSV)' : 'URL WebSocket (ws:// или wss://)'}
-              mono
-              placeholder={c.type === 'rest' ? 'https://wms.example.ru/api/stock' : 'wss://wms.example.ru/stock'}
+              label={c.type === 'rest' ? 'Адрес API (GET)' : 'Адрес WebSocket'}
               value={c.url}
-              onChange={(v) => up({ url: v.trim() })}
+              mono
+              placeholder={c.type === 'rest' ? 'https://erp.zavod.local/api/stock' : 'wss://wms.zavod.local/stock'}
+              onChange={(v) => up({ url: v })}
             />
-            {c.type === 'rest' && (
-              <>
-                <Text
-                  label='Заголовки (JSON), напр. {"Authorization":"Bearer …"}'
-                  mono
-                  value={c.headers}
-                  onChange={(v) => up({ headers: v })}
-                />
-                <Num
-                  label="Опрашивать каждые"
-                  unit="с"
-                  value={c.interval}
-                  min={5}
-                  max={86400}
-                  onChange={(v) => up({ interval: v })}
-                />
-              </>
-            )}
-            <div className="row wrap">
+            <div className="grid2">
+              <Text
+                label="Путь к массиву в ответе"
+                value={c.path}
+                mono
+                placeholder="data.items"
+                onChange={(v) => up({ path: v })}
+              />
               {c.type === 'rest' && (
-                <button className="btn" disabled={busy || !c.url} onClick={testRest}>
-                  Загрузить сейчас
+                <Num label="Период опроса" unit="с" value={c.interval} min={5} onChange={(v) => up({ interval: v })} />
+              )}
+            </div>
+            <Text
+              label='Заголовки (JSON), например {"Authorization": "Bearer …"}'
+              value={c.headers}
+              mono
+              onChange={(v) => up({ headers: v })}
+            />
+            <div className="row wrap">
+              <Check label="Подключение активно" checked={c.active} onChange={(v) => up({ active: v })} />
+              {c.type === 'rest' && (
+                <button className="btn small primary" disabled={!c.url || busy} onClick={testRest}>
+                  {busy ? 'Запрос…' : 'Получить срез сейчас'}
                 </button>
               )}
-              <button
-                className={`btn ${c.active ? 'active' : 'primary'}`}
-                disabled={!c.url}
-                onClick={() => up({ active: !c.active })}
-              >
-                {c.active ? '■ Отключить' : c.type === 'rest' ? '▶ Автообновление' : '▶ Подключиться'}
-              </button>
             </div>
+            {c.type === 'ws' && (
+              <Hint>
+                Сообщение с полным срезом: <code>{'{"full": true, "items": [...]}'}</code>; иначе — записи только по
+                изменившимся ячейкам.
+              </Hint>
+            )}
           </>
         )}
-
         {c.type === 'file' && (
-          <div
-            className="dropzone"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const f = e.dataTransfer.files[0];
-              if (f) loadFile(f);
-            }}
-            onClick={() => fileRef.current?.click()}
-          >
-            Перетащите CSV/JSON сюда или нажмите, чтобы выбрать файл
+          <>
+            <div className="dropzone" onClick={() => fileRef.current?.click()}>
+              <Icon name="upload" size={22} />
+              <div>Загрузить срез остатков: CSV (разделитель «;») или JSON</div>
+            </div>
             <input
               ref={fileRef}
               type="file"
-              accept=".csv,.txt,.json"
+              accept=".csv,.json,.txt,text/csv,application/json"
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) loadFile(f);
+                if (f) runFile(f);
                 e.target.value = '';
               }}
             />
-          </div>
+          </>
         )}
-
-        {msg && <div className="note">{msg}</div>}
         {sync && (
           <div className={`sync ${sync.error ? 'error' : ''}`}>
-            <div>
-              <b>{sync.error ? 'Ошибка' : 'Последнее обновление'}</b> · {timeAgo(sync.at)} · {sync.source}
-            </div>
+            <b>{sync.error ? 'Ошибка' : 'Последний обмен'}</b> · {sync.source} · {timeAgo(sync.at)}
             {sync.error ? (
               <div>{sync.error}</div>
             ) : (
               <div>
-                Записей: {sync.received.toLocaleString('ru-RU')} · сопоставлено ячеек:{' '}
-                {sync.matched.toLocaleString('ru-RU')}
-                {sync.unmatched.length > 0 && (
-                  <details>
-                    <summary>
-                      Не найдены адреса ({sync.unmatched.length}
-                      {sync.unmatched.length >= 50 ? '+' : ''})
-                    </summary>
-                    <div className="mono small">{sync.unmatched.join(', ')}</div>
-                  </details>
-                )}
+                Записей: {sync.received} · ячеек сопоставлено: {sync.matched}
               </div>
+            )}
+            {sync.unmatched.length > 0 && (
+              <div className="muted small">Адреса не найдены: {sync.unmatched.slice(0, 12).join(', ')}</div>
             )}
           </div>
         )}
-        {hasFills && (
-          <button className="btn small" onClick={() => (up({ active: false }), st().clearFills(w.id))}>
-            Очистить данные заполнения
-          </button>
-        )}
+        {inv?.updatedAt ? <p className="hint">Срез остатков обновлён {timeAgo(inv.updatedAt)}.</p> : null}
       </Section>
 
-      {(c.type === 'rest' || c.type === 'ws' || c.type === 'file') && (
+      {c.type !== 'demo' && c.type !== 'none' && (
         <Section title="Сопоставление полей">
-          <Text
-            label="Путь к массиву записей (пусто — корень)"
-            mono
-            placeholder="data.items"
-            value={c.path}
-            onChange={(v) => up({ path: v.trim() })}
-          />
+          <Hint>Укажите, как называются поля в выгрузке учётной системы. Вложенные поля — через точку: stock.qty.</Hint>
           <div className="mapping">
-            {MAPPING_FIELDS.map((f) => (
+            {SNAPSHOT_FIELDS.map((f) => (
               <Text
                 key={f.key}
-                label={
-                  <>
-                    {f.label} <span className="muted">{f.hint}</span>
-                  </>
-                }
+                label={`${f.title}${f.hint ? ` — ${f.hint}` : ''}`}
+                value={c.mapping[f.key] ?? ''}
                 mono
-                value={c.mapping[f.key]}
-                onChange={(v) => up({ mapping: { ...c.mapping, [f.key]: v.trim() } })}
+                onChange={(v) => setMap(f.key, v)}
               />
             ))}
           </div>
-          <Hint>
-            Ожидаемый формат (поля переименовываются выше, вложенные — через точку, например <code>stock.qty</code>):
-          </Hint>
-          <pre className="code-block">{SAMPLE}</pre>
-          <Hint>
-            Поддерживаются также CSV с заголовком (разделитель «;» или «,») и словарь вида{' '}
-            <code>{'{"A-01-01-01": {"fill": 0.5}}'}</code>. Несколько записей на один адрес суммируются.
-          </Hint>
+          {preview && (
+            <>
+              <h4>Пример полученных записей</h4>
+              <pre className="code-block">{JSON.stringify(preview, null, 1)}</pre>
+            </>
+          )}
         </Section>
       )}
 
-      <Section title="Выгрузка структуры в учётную систему">
-        <Hint>Передайте адреса и параметры ячеек (Д, Ш, В, Г) в WMS/1С, чтобы адреса совпадали.</Hint>
+      <Section title="Обмен со структурой склада">
+        <Hint>
+          Шаблон среза — текущие остатки в формате обмена (CSV). Структура мест — адреса ячеек с типами, размерами
+          Ш×Г×В, местами и нагрузками для настройки адресного хранения в учётной системе.
+        </Hint>
         <div className="row wrap">
+          <button
+            className="btn small"
+            onClick={() => {
+              const { header, rows } = snapshotRows(inv, products, tare);
+              download(
+                `срез_${w.name.replace(/[^\p{L}\p{N}_-]+/gu, '_')}.csv`,
+                toCSV(header, rows),
+                'text/csv;charset=utf-8',
+              );
+            }}
+          >
+            <Icon name="download" size={15} /> Шаблон / срез CSV
+          </button>
           <button
             className="btn small"
             onClick={() =>
               download(
-                `структура_${w.name}.json`,
-                JSON.stringify(structurePayload(w, cells), null, 1),
+                `структура_${w.name.replace(/[^\p{L}\p{N}_-]+/gu, '_')}.json`,
+                JSON.stringify(structurePayload(w, cellsOf(w).cells), null, 1),
                 'application/json',
               )
             }
           >
-            JSON структуры
-          </button>
-          <button className="btn small" onClick={templateCSV}>
-            Шаблон CSV для заполнения
+            <Icon name="download" size={15} /> Структура мест JSON
           </button>
         </div>
         <Text
-          label="URL для отправки структуры (POST JSON)"
-          mono
-          placeholder="https://wms.example.ru/api/locations"
+          label="Выгрузить структуру в учётную систему (POST)"
           value={c.pushUrl}
-          onChange={(v) => up({ pushUrl: v.trim() })}
+          mono
+          placeholder="https://erp.zavod.local/api/locations"
+          onChange={(v) => up({ pushUrl: v })}
         />
-        <button className="btn small" disabled={!c.pushUrl || busy} onClick={push}>
+        <button
+          className="btn small"
+          disabled={!c.pushUrl}
+          onClick={async () => {
+            try {
+              const n = await pushStructure(w);
+              st().toast(`Отправлено ячеек: ${n}`);
+            } catch (e) {
+              st().toast(`Ошибка выгрузки: ${e instanceof Error ? e.message : e}`, 'error');
+            }
+          }}
+        >
           Отправить структуру
         </button>
       </Section>

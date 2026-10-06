@@ -1,65 +1,47 @@
 import { useMemo } from 'react';
-import type { Cell, CellFill, Inventory, Product, Warehouse } from '../types';
-import { buildCells } from './rack';
+import type { Inventory, Warehouse } from '../types';
 import { useStore, useWarehouse } from '../store';
-import { computeStats } from './fill';
-import { bbox, rectCorners } from './geometry';
-import { fillsFromInventory, productTotals, type ProductTotal } from './inventory';
+import { cellsOf, monitorOf, partyLabel, productsMap, tareMap, type CellsIndex, type Monitor } from './monitor';
+import { productTotals, type ProductTotal } from './inventory';
 
-const cellsCache = new WeakMap<Warehouse, { cells: Cell[]; byKey: Map<string, Cell>; byAddress: Map<string, Cell> }>();
+// Хуки React поверх расчётов мониторинга (lib/monitor.ts).
 
-/** Ячейки склада (кэшируются, пока структура склада не изменилась). */
-export function cellsOf(w: Warehouse) {
-  let v = cellsCache.get(w);
-  if (!v) {
-    const cells = buildCells(w);
-    v = { cells, byKey: new Map(cells.map((c) => [c.key, c])), byAddress: new Map(cells.map((c) => [c.address, c])) };
-    cellsCache.set(w, v);
-  }
-  return v;
-}
+const EMPTY: CellsIndex = { cells: [], byKey: new Map(), byAddress: new Map(), byRack: new Map() };
 
-const EMPTY = { cells: [] as Cell[], byKey: new Map<string, Cell>(), byAddress: new Map<string, Cell>() };
-
-export function useCells() {
+export function useCells(): CellsIndex {
   const w = useWarehouse();
   return w ? cellsOf(w) : EMPTY;
 }
 
-const NO_FILLS: Record<string, CellFill> = {};
-
-const productMaps = new WeakMap<Product[], Map<string, Product>>();
-
-export function productsMap(products: Product[]) {
-  let m = productMaps.get(products);
-  if (!m) productMaps.set(products, (m = new Map(products.map((p) => [p.id, p]))));
-  return m;
-}
-
 export const useProducts = () => useStore((s) => s.products);
 export const useProductsMap = () => productsMap(useProducts());
+export const useTareTypes = () => useStore((s) => s.tareTypes);
+export const useTareMap = () => tareMap(useTareTypes());
+export const useConsumers = () => useStore((s) => s.consumers);
 export const useInventory = (): Inventory | undefined =>
   useStore((s) => (s.currentId ? s.inventory[s.currentId] : undefined));
 
-let lastFills: { cells: Cell[]; inv?: Inventory; products: Product[]; out: Record<string, CellFill> } | null = null;
-
-/** Заполнение по внутреннему учёту (кэш на одну комбинацию структуры, остатков и каталога). */
-export function internalFills(cells: Cell[], inv: Inventory | undefined, products: Product[]) {
-  if (lastFills && lastFills.cells === cells && lastFills.inv === inv && lastFills.products === products)
-    return lastFills.out;
-  const out = fillsFromInventory(cells, inv, productsMap(products));
-  lastFills = { cells, inv, products, out };
-  return out;
-}
-
-/** Заполнение ячеек: из внутреннего учёта или из внешнего подключения. */
-export function useFills(): Record<string, CellFill> {
-  const internal = useStore((s) => s.warehouses.find((w) => w.id === s.currentId)?.connection.type === 'internal');
-  const stored = useStore((s) => (s.currentId ? s.fills[s.currentId] : undefined) ?? NO_FILLS);
+/** Мониторинг текущего склада. */
+export function useMonitor(): Monitor | undefined {
+  const w = useWarehouse();
   const inv = useInventory();
   const products = useProducts();
-  const { cells } = useCells();
-  return internal ? internalFills(cells, inv, products) : stored;
+  const tare = useTareTypes();
+  return w ? monitorOf(w, inv, products, tare) : undefined;
+}
+
+/** Мониторинг любого склада (для обзора всех объектов). */
+export function useMonitorOf(w: Warehouse): Monitor {
+  const inv = useStore((s) => s.inventory[w.id]);
+  const products = useProducts();
+  const tare = useTareTypes();
+  return monitorOf(w, inv, products, tare);
+}
+
+/** Подпись получателя/места тары по коду. */
+export function usePartyName() {
+  const consumers = useConsumers();
+  return useMemo(() => (code?: string) => partyLabel(code, consumers), [consumers]);
 }
 
 const totalsCache = new WeakMap<Inventory, Map<string, ProductTotal>>();
@@ -74,29 +56,4 @@ export function useProductTotals(): Map<string, ProductTotal> {
   }, [inv]);
 }
 
-export function useStats() {
-  const { cells } = useCells();
-  const fills = useFills();
-  return useMemo(() => computeStats(cells, fills), [cells, fills]);
-}
-
-/** Габариты всего объекта на плане (м). */
-export function warehouseBounds(w: Warehouse) {
-  const pts = [
-    ...w.rooms.flatMap((r) => r.points),
-    ...w.equipment.flatMap((e) => rectCorners(e.x, e.y, e.length, e.width, e.rotation)),
-  ];
-  if (!pts.length) return { minX: -10, minY: -10, maxX: 10, maxY: 10 };
-  return bbox(pts);
-}
-
-/** Есть ли в адресах ячеек дубли (например, одинаковые коды стеллажей). */
-export function duplicateAddresses(cells: Cell[]): string[] {
-  const seen = new Set<string>();
-  const dup = new Set<string>();
-  for (const c of cells) {
-    if (seen.has(c.address)) dup.add(c.address);
-    seen.add(c.address);
-  }
-  return [...dup];
-}
+export { cellsOf, warehouseBounds, duplicateAddresses } from './monitor';

@@ -1,98 +1,64 @@
-import type { Cell, CellFill, Inventory, Product, Section, SyncStatus } from '../types';
-import { productTotals, stockStatus } from './inventory';
-
-export type AlertLevel = 'critical' | 'warning' | 'info';
+import type { Section, SyncStatus, Warehouse } from '../types';
+import { LEVEL_ORDER, VIOLATIONS, type Level, type ViolationKind } from './control';
+import type { Monitor } from './monitor';
 
 export interface Alert {
   id: string;
-  level: AlertLevel;
+  level: Level;
   title: string;
   text: string;
   at?: number;
   section?: Section;
-  productId?: string;
-  cell?: string;
+  address?: string;
+  kind?: ViolationKind;
 }
 
-/** Уведомления: дефицит товара, перегруз ячеек, ошибки подключения, документы в работе. */
-export function buildAlerts(
-  inv: Inventory | undefined,
-  products: Product[],
-  cells: Cell[],
-  fills: Record<string, CellFill>,
-  sync?: SyncStatus,
-): Alert[] {
+/** Уведомления: нарушения правил хранения (по видам), ошибки и задержки обмена с учётной системой. */
+export function buildAlerts(w: Warehouse | undefined, m: Monitor | undefined, sync?: SyncStatus): Alert[] {
   const out: Alert[] = [];
-  const totals = productTotals(inv);
-  for (const p of products) {
-    const q = totals.get(p.id)?.qty ?? 0;
-    const st = stockStatus(p, q);
-    if (st === 'out' && p.min > 0)
+  if (m) {
+    const byKind = new Map<ViolationKind, string[]>();
+    for (const v of m.violations) {
+      const list = byKind.get(v.kind) ?? [];
+      list.push(v.address);
+      byKind.set(v.kind, list);
+    }
+    byKind.forEach((addresses, kind) => {
+      const spec = VIOLATIONS[kind];
+      const uniq = [...new Set(addresses)];
       out.push({
-        id: `out-${p.id}`,
-        level: 'critical',
-        title: 'Нет в наличии',
-        text: `${p.name} (${p.sku})`,
-        section: 'stock',
-        productId: p.id,
+        id: `v-${kind}`,
+        level: spec.level,
+        title: spec.title,
+        text: `${uniq.length} ${uniq.length === 1 ? 'место' : 'мест'}: ${uniq.slice(0, 3).join(', ')}${uniq.length > 3 ? '…' : ''}`,
+        section: 'control',
+        address: uniq[0],
+        kind,
       });
-    if (st === 'low')
-      out.push({
-        id: `low-${p.id}`,
-        level: 'warning',
-        title: 'Низкий остаток',
-        text: `${p.name}: ${q.toLocaleString('ru-RU')} ${p.unit} при минимуме ${p.min.toLocaleString('ru-RU')}`,
-        section: 'stock',
-        productId: p.id,
-      });
-  }
-  const overloaded = cells.filter((c) => {
-    const f = fills[c.address];
-    return f?.weight !== undefined && c.maxLoad > 0 && f.weight > c.maxLoad;
-  });
-  if (overloaded.length)
-    out.push({
-      id: 'overload',
-      level: 'critical',
-      title: 'Перегруз ячеек',
-      text: `${overloaded.length} яч. тяжелее допустимой нагрузки Г: ${overloaded
-        .slice(0, 3)
-        .map((c) => c.address)
-        .join(', ')}${overloaded.length > 3 ? '…' : ''}`,
-      section: 'analytics',
-      cell: overloaded[0].address,
     });
+  }
   if (sync?.error)
     out.push({
       id: 'sync',
       level: 'critical',
-      title: 'Ошибка подключения',
+      title: 'Ошибка обмена с учётной системой',
       text: sync.error,
       at: sync.at,
       section: 'settings',
     });
-  const newReceipts =
-    inv?.docs.filter((d) => d.kind === 'receipt' && d.status !== 'done' && d.status !== 'cancelled') ?? [];
-  if (newReceipts.length)
-    out.push({
-      id: 'receipts',
-      level: 'info',
-      title: 'Ожидают приёмки',
-      text: `Поставок: ${newReceipts.length} (${newReceipts.map((d) => d.number).join(', ')})`,
-      at: Math.max(...newReceipts.map((d) => d.createdAt)),
-      section: 'inbound',
-    });
-  const openOrders =
-    inv?.docs.filter((d) => d.kind === 'order' && d.status !== 'done' && d.status !== 'cancelled') ?? [];
-  if (openOrders.length)
-    out.push({
-      id: 'orders',
-      level: 'info',
-      title: 'Заказы к сборке',
-      text: `Заказов: ${openOrders.length} (${openOrders.map((d) => d.number).join(', ')})`,
-      at: Math.max(...openOrders.map((d) => d.createdAt)),
-      section: 'orders',
-    });
-  const order = { critical: 0, warning: 1, info: 2 };
-  return out.sort((a, b) => order[a.level] - order[b.level]);
+  const conn = w?.connection;
+  const updated = m?.inv?.updatedAt ?? 0;
+  if (conn?.active && (conn.type === 'rest' || conn.type === 'demo') && updated) {
+    const period = (conn.type === 'rest' ? conn.interval : conn.demoInterval) * 1000;
+    if (Date.now() - updated > Math.max(5 * 60000, period * 5))
+      out.push({
+        id: 'stale',
+        level: 'warning',
+        title: 'Данные устарели',
+        text: `Срез остатков не обновлялся с ${new Date(updated).toLocaleString('ru-RU')}`,
+        at: updated,
+        section: 'settings',
+      });
+  }
+  return out.sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]);
 }

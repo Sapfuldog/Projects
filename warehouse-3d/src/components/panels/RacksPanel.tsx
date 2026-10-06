@@ -1,15 +1,32 @@
 import { useEffect, useState } from 'react';
 import { useStore, useWarehouse } from '../../store';
-import type { Rack, RackKind, Tier, Warehouse, Zone } from '../../types';
+import type { CellType, Rack, RackKind, Tier, Warehouse, Zone } from '../../types';
 import { generateRows, suggestCode, type GenParams } from '../../lib/layout';
 import { bbox, fmt } from '../../lib/geometry';
 import { uid } from '../../lib/demo';
-import { RACK_SPEC, RACK_TEMPLATES, rackCellCount, rackHeight, rackLength, rackWarnings } from '../../lib/rack';
+import { CELL_TYPES } from '../../lib/materials';
+import {
+  RACK_SPEC,
+  RACK_TEMPLATES,
+  defaultPlaces,
+  rackCellCount,
+  rackContext,
+  rackDepth,
+  rackHeight,
+  rackLength,
+  rackWarnings,
+  tierCellType,
+} from '../../lib/rack';
 import { Check, Hint, Num, Section, Select, Text, Warn } from '../ui';
 import { Tile } from './EquipmentPanel';
 
+const CELL_TYPE_OPTIONS = (Object.keys(CELL_TYPES) as CellType[])
+  .filter((t) => t !== 'virtual')
+  .map((t) => ({ value: t, label: CELL_TYPES[t].title }));
+
 function TiersEditor({ rack, zone }: { rack: Rack; zone?: Zone }) {
   const st = useStore.getState;
+  const spec = RACK_SPEC[rack.kind];
   const [count, setCount] = useState(rack.tiers.length);
   const [height, setHeight] = useState(rack.tiers[0]?.height ?? 1500);
   const [cells, setCells] = useState(rack.tiers[0]?.cells ?? 3);
@@ -17,48 +34,83 @@ function TiersEditor({ rack, zone }: { rack: Rack; zone?: Zone }) {
   const setTiers = (tiers: Tier[]) => st().updateRack(rack.id, { tiers });
   const setTier = (i: number, patch: Partial<Tier>) =>
     setTiers(rack.tiers.map((t, j) => (j === i ? { ...t, ...patch } : t)));
-  const beam = RACK_SPEC[rack.kind].beam;
+  const cellW = (t: Tier) => (spec.across ? rack.sectionLength : Math.round(rack.sectionLength / Math.max(1, t.cells)));
+  const cellD = (t: Tier) =>
+    spec.across && rack.kind !== 'cantilever' ? Math.round(rack.depth / Math.max(1, t.cells)) : rack.depth;
 
   const fitToZone = () => {
     if (!zone) return;
-    const limit = zone.height * 1000;
-    const base = rack.groundLevel ? 0 : beam;
-    const n = Math.max(1, Math.floor((limit - base + beam) / (height + beam)));
+    const limit = (rack.mezzanineId ? 3000 : zone.height * 1000) - spec.base;
+    const base = rack.groundLevel ? 0 : spec.beam;
+    const n = Math.max(1, Math.floor((limit - base + spec.beam) / (height + spec.beam)));
     setCount(n);
-    setTiers(Array.from({ length: n }, () => ({ height, cells, maxLoad: load })));
+    setTiers(Array.from({ length: n }, () => ({ height, cells, maxLoad: load, cellType: rack.tiers[0]?.cellType })));
   };
 
   return (
     <>
-      <div className="tiers">
-        <div className="tiers-head">
+      <div className="tiers2">
+        <div className="tiers2-head">
           <span>Ярус</span>
           <span title="Высота яруса в свету = В ячейки">В, мм</span>
-          <span title="Ячеек в одной секции">Ячеек</span>
-          <span title="Грузоподъёмность одной ячейки">Г, кг</span>
-          <span title="Длина ячейки = длина секции / число ячеек">Д, мм</span>
+          <span title={spec.across ? 'Ячеек в секции: стороны консоли или ряды мест' : 'Ячеек в секции на ярусе'}>
+            Яч.
+          </span>
+          <span title="Допустимая нагрузка на ячейку">Нагр., кг</span>
+          <span>Тип ячеек</span>
+          <span title="Мест (паллет, коробов, баллонов) в ячейке; пусто — по размерам, 0 — без мест">Мест</span>
+          <span title="Ш × Г ячейки">Ш×Г, мм</span>
           <span />
         </div>
         {[...rack.tiers]
           .map((t, i) => ({ t, i }))
           .reverse()
-          .map(({ t, i }) => (
-            <div className="tiers-row" key={i}>
-              <span className="muted">{i + 1}</span>
-              <Num value={t.height} min={50} step={50} onChange={(v) => setTier(i, { height: v })} />
-              <Num value={t.cells} min={1} max={50} onChange={(v) => setTier(i, { cells: Math.round(v) })} />
-              <Num value={t.maxLoad} min={0} step={50} onChange={(v) => setTier(i, { maxLoad: v })} />
-              <span className="muted small">{Math.round(rack.sectionLength / t.cells)}</span>
-              <button
-                className="icon-btn small"
-                disabled={rack.tiers.length <= 1}
-                title="Удалить ярус"
-                onClick={() => setTiers(rack.tiers.filter((_, j) => j !== i))}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          .map(({ t, i }) => {
+            const type = tierCellType(rack, t);
+            const auto = defaultPlaces(type, cellW(t), cellD(t), t.height);
+            return (
+              <div className="tiers2-row" key={i}>
+                <span className="muted">{i + 1}</span>
+                <Num value={t.height} min={50} step={50} onChange={(v) => setTier(i, { height: v })} />
+                <Num value={t.cells} min={1} max={50} onChange={(v) => setTier(i, { cells: Math.round(v) })} />
+                <Num value={t.maxLoad} min={0} step={50} onChange={(v) => setTier(i, { maxLoad: v })} />
+                <select
+                  className="input"
+                  value={type}
+                  onChange={(e) => setTier(i, { cellType: e.target.value as CellType })}
+                >
+                  {CELL_TYPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  placeholder={String(auto)}
+                  value={t.places ?? ''}
+                  onChange={(e) =>
+                    setTier(i, {
+                      places: e.target.value === '' ? undefined : Math.max(0, Math.round(Number(e.target.value))),
+                    })
+                  }
+                />
+                <span className="muted small">
+                  {cellW(t)}×{cellD(t)}
+                </span>
+                <button
+                  className="icon-btn small"
+                  disabled={rack.tiers.length <= 1}
+                  title="Удалить ярус"
+                  onClick={() => setTiers(rack.tiers.filter((_, j) => j !== i))}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
       </div>
       <div className="row wrap">
         <button
@@ -79,12 +131,21 @@ function TiersEditor({ rack, zone }: { rack: Rack; zone?: Zone }) {
           <Num label="Ярусов" value={count} min={1} max={40} onChange={(v) => setCount(Math.round(v))} />
           <Num label="В, мм" value={height} min={50} step={50} onChange={setHeight} />
           <Num label="Ячеек" value={cells} min={1} max={50} onChange={(v) => setCells(Math.round(v))} />
-          <Num label="Г, кг" value={load} min={0} step={50} onChange={setLoad} />
+          <Num label="Нагр., кг" value={load} min={0} step={50} onChange={setLoad} />
         </div>
         <div className="row wrap">
           <button
             className="btn small"
-            onClick={() => setTiers(Array.from({ length: count }, () => ({ height, cells, maxLoad: load })))}
+            onClick={() =>
+              setTiers(
+                Array.from({ length: count }, () => ({
+                  height,
+                  cells,
+                  maxLoad: load,
+                  cellType: rack.tiers[0]?.cellType,
+                })),
+              )
+            }
           >
             Применить
           </button>
@@ -92,9 +153,9 @@ function TiersEditor({ rack, zone }: { rack: Rack; zone?: Zone }) {
             <button
               className="btn small"
               onClick={fitToZone}
-              title="Максимум ярусов такой высоты, который помещается в высоту зоны"
+              title="Максимум ярусов такой высоты под высоту зоны (или уровня мезонина)"
             >
-              Максимум ярусов под высоту зоны ({zone.height} м)
+              Максимум ярусов под высоту {rack.mezzanineId ? 'уровня мезонина' : `зоны (${zone.height} м)`}
             </button>
           )}
         </div>
@@ -106,9 +167,12 @@ function TiersEditor({ rack, zone }: { rack: Rack; zone?: Zone }) {
 function RackEditor({ rack, w }: { rack: Rack; w: Warehouse }) {
   const st = useStore.getState;
   const zone = w.zones.find((z) => z.id === rack.zoneId);
+  const ctx = rackContext(w, rack);
   const warnings = rackWarnings(w, rack);
-  const dup = w.racks.some((r) => r.id !== rack.id && r.code === rack.code && r.zoneId === rack.zoneId);
+  const dup = w.racks.some((r) => r.id !== rack.id && r.code === rack.code);
   const up = (patch: Partial<Rack>) => st().updateRack(rack.id, patch);
+  const cellsLoad = rack.sections * rack.tiers.reduce((s, t) => s + t.cells * t.maxLoad, 0);
+  const mezzanines = w.mezzanines.filter((m) => m.zoneId === rack.zoneId);
   return (
     <Section
       title={`Стеллаж ${rack.code}`}
@@ -119,7 +183,7 @@ function RackEditor({ rack, w }: { rack: Rack; w: Warehouse }) {
             title="Копия рядом"
             onClick={() => {
               const a = (rack.rotation * Math.PI) / 180;
-              const off = rack.depth / 1000 + 3;
+              const off = rackDepth(rack) / 1000 + 3;
               st().addRacks([
                 {
                   ...JSON.parse(JSON.stringify(rack)),
@@ -127,6 +191,7 @@ function RackEditor({ rack, w }: { rack: Rack; w: Warehouse }) {
                   code: suggestCode(w),
                   x: Math.round((rack.x - Math.sin(a) * off) * 100) / 100,
                   y: Math.round((rack.y + Math.cos(a) * off) * 100) / 100,
+                  overrides: {},
                 },
               ]);
             }}
@@ -142,16 +207,16 @@ function RackEditor({ rack, w }: { rack: Rack; w: Warehouse }) {
       <div className="grid3">
         <Text label="Код стеллажа" value={rack.code} onChange={(v) => up({ code: v.trim() })} />
         <Select<RackKind>
-          label="Тип"
+          label="Вид"
           value={rack.kind}
-          onChange={(v) => up({ kind: v })}
+          onChange={(v) => up({ kind: v, groundLevel: v !== 'shelf' })}
           options={(Object.keys(RACK_SPEC) as RackKind[]).map((k) => ({ value: k, label: RACK_SPEC[k].title }))}
         />
         <Select
           label="Зона"
           value={rack.zoneId}
-          onChange={(v) => up({ zoneId: v })}
-          options={w.zones.map((z) => ({ value: z.id, label: z.name }))}
+          onChange={(v) => up({ zoneId: v, mezzanineId: undefined, deck: undefined })}
+          options={w.zones.map((z) => ({ value: z.id, label: `${z.code} · ${z.name}` }))}
         />
         <Num label="X центра" unit="м" value={rack.x} step={0.1} onChange={(v) => up({ x: v })} />
         <Num label="Y центра" unit="м" value={rack.y} step={0.1} onChange={(v) => up({ y: v })} />
@@ -174,13 +239,38 @@ function RackEditor({ rack, w }: { rack: Rack; w: Warehouse }) {
           </button>
         ))}
       </div>
-      {dup && <Warn items={['Код повторяется в этой зоне — адреса ячеек будут совпадать']} />}
+      {dup && <Warn items={['Код повторяется — адреса ячеек будут совпадать']} />}
 
-      <h4>Секции</h4>
+      {mezzanines.length > 0 && (
+        <div className="grid2">
+          <Select
+            label="Мезонин"
+            value={rack.mezzanineId ?? ''}
+            onChange={(v) => up({ mezzanineId: v || undefined, deck: v ? (rack.deck ?? 1) : undefined })}
+            options={[{ value: '', label: 'На полу' }, ...mezzanines.map((m) => ({ value: m.id, label: m.name }))]}
+          />
+          {rack.mezzanineId && (
+            <Select
+              label="Уровень"
+              value={rack.deck ?? 1}
+              onChange={(v) => up({ deck: v })}
+              options={Array.from(
+                { length: (mezzanines.find((m) => m.id === rack.mezzanineId)?.levels ?? 1) + 1 },
+                (_, k) => ({
+                  value: k,
+                  label: k === 0 ? 'Уровень 1 (под настилом)' : `Уровень ${k + 1} (настил ${k})`,
+                }),
+              )}
+            />
+          )}
+        </div>
+      )}
+
+      <h4>Секции {RACK_SPEC[rack.kind].across ? '(для консолей и пола — пролёты)' : ''}</h4>
       <div className="grid3">
         <Num label="Секций" value={rack.sections} min={1} max={200} onChange={(v) => up({ sections: Math.round(v) })} />
         <Num
-          label="Длина секции (в свету)"
+          label="Ширина секции в свету (Ш)"
           unit="мм"
           value={rack.sectionLength}
           min={100}
@@ -188,7 +278,7 @@ function RackEditor({ rack, w }: { rack: Rack; w: Warehouse }) {
           onChange={(v) => up({ sectionLength: v })}
         />
         <Num
-          label="Глубина = Ш ячейки"
+          label={rack.kind === 'cantilever' ? 'Вылет консоли (Г)' : 'Глубина (Г)'}
           unit="мм"
           value={rack.depth}
           min={100}
@@ -196,31 +286,61 @@ function RackEditor({ rack, w }: { rack: Rack; w: Warehouse }) {
           onChange={(v) => up({ depth: v })}
         />
       </div>
-      <Check
-        label="Нижний ярус на полу (без балки)"
-        checked={rack.groundLevel}
-        onChange={(v) => up({ groundLevel: v })}
-      />
+      <div className="row wrap">
+        {rack.kind !== 'floor' && rack.kind !== 'cantilever' && (
+          <Check
+            label="Нижний ярус на полу (без балки)"
+            checked={rack.groundLevel}
+            onChange={(v) => up({ groundLevel: v })}
+          />
+        )}
+        {rack.kind === 'cantilever' && (
+          <Check label="Двусторонний" checked={!!rack.doubleSided} onChange={(v) => up({ doubleSided: v })} />
+        )}
+      </div>
+
+      <h4>Нагрузки</h4>
+      <div className="grid2">
+        <Num
+          label="Допустимая на секцию (раму)"
+          unit="кг"
+          value={rack.sectionLoad ?? 0}
+          min={0}
+          step={100}
+          onChange={(v) => up({ sectionLoad: v || undefined })}
+        />
+        <Num
+          label="Допустимая на стеллаж"
+          unit="кг"
+          value={rack.maxLoad ?? 0}
+          min={0}
+          step={500}
+          onChange={(v) => up({ maxLoad: v || undefined })}
+        />
+      </div>
+      <Hint>
+        Нагрузка на ячейку задаётся по ярусам ниже. 0 — не ограничено. Перегрузы видны в «Контроле» и в режиме окраски
+        «Нагрузка».
+      </Hint>
 
       <h4>Ярусы и ячейки (сверху вниз)</h4>
       <TiersEditor key={rack.id} rack={rack} zone={zone} />
 
       <div className="metrics">
         <span>
-          Габарит:{' '}
+          Габарит Д×Г×В:{' '}
           <b>
-            {fmt(rackLength(rack) / 1000)} × {fmt(rack.depth / 1000)} × {fmt(rackHeight(rack) / 1000)} м
+            {fmt(rackLength(rack) / 1000)} × {fmt(rackDepth(rack) / 1000)} × {fmt(rackHeight(rack) / 1000)} м
           </b>
+        </span>
+        <span>
+          Основание: <b>+{fmt(ctx.base)} м</b>
         </span>
         <span>
           Ячеек: <b>{rackCellCount(rack)}</b>
         </span>
         <span>
-          Г стеллажа:{' '}
-          <b>
-            {((rack.sections * rack.tiers.reduce((s, t) => s + t.cells * t.maxLoad, 0)) / 1000).toLocaleString('ru-RU')}{' '}
-            т
-          </b>
+          Сумма нагрузок ячеек: <b>{(cellsLoad / 1000).toLocaleString('ru-RU')} т</b>
         </span>
       </div>
       <Warn items={warnings} />
@@ -232,6 +352,14 @@ function RackEditor({ rack, w }: { rack: Rack; w: Warehouse }) {
     </Section>
   );
 }
+
+const ART: Record<RackKind, string> = {
+  pallet: 'rack-pallet',
+  shelf: 'rack-shelf',
+  cantilever: 'rack-cantilever',
+  floor: 'rack-floor',
+  cylinder: 'rack-cylinder',
+};
 
 export function RacksPanel() {
   const w = useWarehouse();
@@ -303,19 +431,19 @@ export function RacksPanel() {
 
   return (
     <>
-      <Section title="Стеллажи">
+      <Section title="Стеллажи и места хранения">
         <Select
           label="Зона размещения"
           value={zoneId}
           onChange={setZoneId}
-          options={w.zones.map((z) => ({ value: z.id, label: `${z.name} (≤ ${z.height} м)` }))}
+          options={w.zones.map((z) => ({ value: z.id, label: `${z.code} · ${z.name} (≤ ${z.height} м)` }))}
         />
         <div className="tiles">
           {RACK_TEMPLATES.map((t) => (
             <Tile
               key={t.id}
-              art={t.rack.kind === 'shelf' ? 'rack-shelf' : t.id === 'pallet-3' ? 'rack-pallet' : 'rack-pallet2'}
-              title={`${t.title.split(':')[0]} ${t.rack.sectionLength}`}
+              art={ART[t.rack.kind]}
+              title={t.title.split(':')[0]}
               hint={t.title}
               onClick={() => addSingle(t.id)}
             />
@@ -328,7 +456,11 @@ export function RacksPanel() {
             onClick={() => setShowGen(!showGen)}
           />
         </div>
-        <Hint>Стеллаж можно перетаскивать на плане. Размеры и ярусы настраиваются ниже после выбора стеллажа.</Hint>
+        <Hint>
+          Паллетный — паллетоместа; полочный — коробочное или штучное хранение (инструмент); консольный — длинномер
+          (трубы, профиль); напольное — штабели листа, крупные узлы, барабаны кабеля; баллонная стойка — газовые
+          баллоны.
+        </Hint>
       </Section>
 
       {showGen && (
@@ -392,20 +524,16 @@ export function RacksPanel() {
             {racksInZone.length > 0 && (
               <button
                 className="btn small danger"
-                onClick={() => {
+                onClick={() =>
                   st().ask(`Удалить все стеллажи зоны (${racksInZone.length})?`, () =>
                     st().deleteRacks(racksInZone.map((r) => r.id)),
-                  );
-                }}
+                  )
+                }
               >
                 Очистить зону
               </button>
             )}
           </div>
-          <Hint>
-            Ряды раскладываются в габарите зоны. Для зон сложной формы проверьте результат на плане — предупреждения
-            появятся у стеллажей, вышедших за границы.
-          </Hint>
         </Section>
       )}
 
@@ -421,7 +549,8 @@ export function RacksPanel() {
               >
                 <span className="code">{r.code}</span>
                 <span className="grow muted small">
-                  {r.sections} секц. × {r.tiers.length} яр. · {rackCellCount(r)} яч.
+                  {RACK_SPEC[r.kind].title} · {r.sections}×{r.tiers.length} · {rackCellCount(r)} яч.
+                  {r.mezzanineId ? ` · ур. ${(r.deck ?? 1) + 1}` : ''}
                 </span>
                 <span className="muted small">{fmt(rackHeight(r) / 1000)} м</span>
                 {warn && <span title="Есть предупреждения">⚠</span>}

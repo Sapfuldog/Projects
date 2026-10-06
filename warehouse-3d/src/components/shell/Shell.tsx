@@ -2,27 +2,27 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useWarehouse } from '../../store';
 import type { Section } from '../../types';
 import { Icon, type IconName } from '../icons';
-import { useCells, useFills, useInventory, useProducts } from '../../lib/derived';
+import { useCells, useInventory, useMonitor, useProducts } from '../../lib/derived';
 import { buildAlerts, type Alert } from '../../lib/alerts';
 import { timeAgo } from '../../lib/analytics';
+import { splitKey } from '../../lib/inventory';
 
-export const NAV: { id: Section; title: string; icon: IconName }[] = [
-  { id: 'home', title: 'Главная', icon: 'home' },
-  { id: 'warehouse', title: 'Склад', icon: 'warehouse' },
-  { id: 'stock', title: 'Остатки', icon: 'boxes' },
-  { id: 'inbound', title: 'Поставки', icon: 'inbound' },
-  { id: 'orders', title: 'Заказы', icon: 'orders' },
-  { id: 'analytics', title: 'Аналитика', icon: 'chart' },
-  { id: 'settings', title: 'Настройки', icon: 'settings' },
+export const NAV: { id: Section; title: string; icon: IconName; hint: string }[] = [
+  { id: 'home', title: 'Обзор', icon: 'home', hint: 'Склады, помещения и ячейки: заполнение и состояние' },
+  { id: 'cells', title: 'Ячейки', icon: 'grid', hint: 'Карта ячеек стеллажей, свойства и содержимое' },
+  { id: 'items', title: 'ТМЦ', icon: 'boxes', hint: 'Где лежат ТМЦ: партии, плавки, сроки' },
+  { id: 'tare', title: 'Тара', icon: 'cylinder', hint: 'Поддоны, барабаны, газовые баллоны' },
+  { id: 'control', title: 'Контроль', icon: 'shield', hint: 'Нарушения правил хранения' },
+  { id: 'analytics', title: 'Аналитика', icon: 'chart', hint: 'Графики заполнения и обращаемости' },
+  { id: 'warehouse', title: 'Конструктор', icon: 'warehouse', hint: 'Здания, этажи, зоны, стеллажи, мезонины' },
+  { id: 'settings', title: 'Настройки', icon: 'settings', hint: 'Объекты, подключение к учётной системе, справочники' },
 ];
 
 export function useAlerts(): Alert[] {
-  const inv = useInventory();
-  const products = useProducts();
-  const { cells } = useCells();
-  const fills = useFills();
+  const w = useWarehouse();
+  const m = useMonitor();
   const sync = useStore((s) => (s.currentId ? s.sync[s.currentId] : undefined));
-  return useMemo(() => buildAlerts(inv, products, cells, fills, sync), [inv, products, cells, fills, sync]);
+  return useMemo(() => buildAlerts(w, m, sync), [w, m, sync]);
 }
 
 export function NavRail() {
@@ -30,14 +30,18 @@ export function NavRail() {
   const theme = useStore((s) => s.theme);
   const st = useStore.getState;
   const alerts = useAlerts();
-  const ok = !alerts.some((a) => a.level !== 'info');
+  const critical = alerts.filter((a) => a.level === 'critical').length;
+  const warning = alerts.filter((a) => a.level === 'warning').length;
   return (
     <aside className="nav">
       <div className="nav-brand">
         <span className="nav-logo">
           <Icon name="cube" size={20} />
         </span>
-        <span>Склад 3D</span>
+        <span>
+          Склад 3D
+          <em>мониторинг ТМЦ</em>
+        </span>
       </div>
       <nav className="nav-items">
         {NAV.map((n) => (
@@ -45,16 +49,23 @@ export function NavRail() {
             key={n.id}
             className={`nav-item ${section === n.id ? 'active' : ''}`}
             onClick={() => st().setSection(n.id)}
+            title={n.hint}
           >
             <Icon name={n.icon} />
             <span>{n.title}</span>
+            {n.id === 'control' && critical + warning > 0 && (
+              <span className={`nav-count ${critical ? 'bad' : 'warn'}`}>{critical + warning}</span>
+            )}
           </button>
         ))}
       </nav>
       <div className="nav-footer">
-        <button className={`nav-status ${ok ? 'ok' : 'warn'}`} onClick={() => st().setSection(ok ? 'home' : 'stock')}>
+        <button
+          className={`nav-status ${critical ? 'bad' : warning ? 'warn' : 'ok'}`}
+          onClick={() => st().setSection('control')}
+        >
           <i />
-          {ok ? 'Склад в норме' : `Требует внимания: ${alerts.filter((a) => a.level !== 'info').length}`}
+          {critical ? `Критично: ${critical}` : warning ? `Внимание: ${warning}` : 'Нарушений нет'}
         </button>
         <button className="nav-item small" onClick={() => st().setTheme(theme === 'dark' ? 'light' : 'dark')}>
           <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
@@ -68,7 +79,7 @@ export function NavRail() {
 export function MobileTabs() {
   const section = useStore((s) => s.section);
   const st = useStore.getState;
-  const items = NAV.filter((n) => ['home', 'warehouse', 'stock', 'orders', 'analytics'].includes(n.id));
+  const items = NAV.filter((n) => ['home', 'cells', 'items', 'control', 'analytics'].includes(n.id));
   return (
     <nav className="mobile-tabs">
       {items.map((n) => (
@@ -101,6 +112,7 @@ function WarehouseSwitcher() {
   return (
     <div className="wh-switch" ref={ref}>
       <button className="wh-btn" onClick={() => setOpen(!open)}>
+        <Icon name={w?.kind === 'virtual' ? 'virtual' : 'warehouse'} size={18} />
         <span className="wh-name">{w?.name ?? 'Нет объектов'}</span>
         <Icon name="chevron" size={16} />
       </button>
@@ -115,8 +127,11 @@ function WarehouseSwitcher() {
                 setOpen(false);
               }}
             >
-              <Icon name="warehouse" size={16} />
-              <span className="grow">{x.name}</span>
+              <Icon name={x.kind === 'virtual' ? 'virtual' : 'warehouse'} size={16} />
+              <span className="grow">
+                {x.name}
+                <span className="muted small"> {x.kind === 'virtual' ? '· виртуальный' : ''}</span>
+              </span>
               {x.id === w?.id && <Icon name="check" size={16} />}
             </button>
           ))}
@@ -124,21 +139,12 @@ function WarehouseSwitcher() {
           <button
             className="dropdown-item"
             onClick={() => {
-              st().createWarehouse('empty');
-              st().setSection('warehouse', 'rooms');
+              st().setLevel('warehouses');
+              st().setSection('home');
               setOpen(false);
             }}
           >
-            <Icon name="plus" size={16} /> Новый склад
-          </button>
-          <button
-            className="dropdown-item"
-            onClick={() => {
-              st().createWarehouse('demo');
-              setOpen(false);
-            }}
-          >
-            <Icon name="plus" size={16} /> Демо-склад
+            <Icon name="grid" size={16} /> Все объекты
           </button>
           <button
             className="dropdown-item"
@@ -163,6 +169,7 @@ interface SearchHit {
   go: () => void;
 }
 
+/** Поиск по адресу ячейки (можно сканером штрихкода), ТМЦ, партии и плавке. */
 function GlobalSearch() {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -170,61 +177,75 @@ function GlobalSearch() {
   useOutside(ref, () => setOpen(false));
   const products = useProducts();
   const inv = useInventory();
-  const { cells } = useCells();
+  const { cells, byAddress } = useCells();
   const st = useStore.getState;
 
   const hits = useMemo<SearchHit[]>(() => {
     const t = q.trim().toUpperCase();
     if (t.length < 2) return [];
     const out: SearchHit[] = [];
-    for (const p of products) {
-      if ([p.name, p.sku, p.barcode ?? ''].some((v) => v.toUpperCase().includes(t)))
-        out.push({
-          key: `p${p.id}`,
-          icon: 'boxes',
-          title: p.name,
-          sub: `Товар · ${p.sku}`,
-          go: () => {
-            st().setSection('stock');
-            st().openProduct(p.id);
-          },
-        });
-      if (out.length >= 6) break;
-    }
-    for (const d of inv?.docs ?? []) {
-      if (d.number.toUpperCase().includes(t) || d.partner.toUpperCase().includes(t))
-        out.push({
-          key: `d${d.id}`,
-          icon: d.kind === 'receipt' ? 'inbound' : 'orders',
-          title: d.number,
-          sub: `${d.kind === 'receipt' ? 'Поставка' : 'Заказ'} · ${d.partner}`,
-          go: () => {
-            st().setSection(d.kind === 'receipt' ? 'inbound' : 'orders');
-            st().openDoc(d.id);
-          },
-        });
-      if (out.length >= 10) break;
-    }
+    const exact = byAddress.get(q.trim()) ?? cells.find((c) => c.address.toUpperCase() === t);
+    if (exact)
+      out.push({
+        key: `x${exact.key}`,
+        icon: 'scan',
+        title: exact.address,
+        sub: 'Ячейка — открыть карточку',
+        go: () => st().openCell(exact.address),
+      });
     let n = 0;
     for (const c of cells) {
-      if (!c.address.toUpperCase().includes(t)) continue;
+      if (c === exact || !c.address.toUpperCase().includes(t)) continue;
       out.push({
         key: `c${c.key}`,
-        icon: 'cells',
+        icon: 'grid',
         title: c.address,
-        sub: `Ячейка · ярус ${c.tier}`,
-        go: () => st().showCell(c.address),
+        sub: c.virtual ? 'Место учёта' : `Ячейка · ярус ${c.tier}`,
+        go: () => st().openCell(c.address),
+      });
+      if (++n >= 5) break;
+    }
+    n = 0;
+    for (const p of products) {
+      if (![p.name, p.sku, p.barcode ?? '', p.attrs?.drawing ?? ''].some((v) => v.toUpperCase().includes(t))) continue;
+      out.push({
+        key: `p${p.id}`,
+        icon: 'boxes',
+        title: p.name,
+        sub: `ТМЦ · ${p.sku}`,
+        go: () => {
+          st().setSection('items');
+          st().openProduct(p.id);
+        },
       });
       if (++n >= 6) break;
     }
+    // Партии и плавки: найти, где лежат
+    n = 0;
+    for (const b of Object.values(inv?.batches ?? {})) {
+      if (![b.number, b.heat ?? '', b.cert ?? '', b.order ?? ''].some((v) => v.toUpperCase().includes(t))) continue;
+      const where = Object.entries(inv?.stock ?? {})
+        .filter(([, items]) => Object.keys(items).some((k) => splitKey(k)[1] === b.id))
+        .map(([a]) => a);
+      if (!where.length) continue;
+      const p = products.find((x) => x.id === b.productId);
+      out.push({
+        key: `b${b.id}`,
+        icon: 'target',
+        title: `${b.heat ? `Плавка ${b.heat}` : `Партия ${b.number}`}`,
+        sub: `${p?.name ?? ''} · ${where.length} яч.`,
+        go: () => st().showCells(where),
+      });
+      if (++n >= 4) break;
+    }
     return out;
-  }, [q, products, inv, cells, st]);
+  }, [q, products, inv, cells, byAddress, st]);
 
   return (
     <div className="gsearch" ref={ref}>
       <Icon name="search" size={16} />
       <input
-        placeholder="Поиск по товарам, ячейкам, заказам…"
+        placeholder="Адрес ячейки, ТМЦ, партия, плавка…"
         value={q}
         onChange={(e) => {
           setQ(e.target.value);
@@ -268,14 +289,11 @@ const LEVEL_ICON: Record<Alert['level'], IconName> = { critical: 'alert', warnin
 
 function Notifications() {
   const alerts = useAlerts();
-  const seen = useStore((s) => s.notifSeenAt);
-  const inv = useInventory();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false));
   const st = useStore.getState;
-  const fresh = (inv?.events ?? []).filter((e) => e.at > seen).length;
-  const count = alerts.filter((a) => a.level !== 'info').length + (fresh > 0 ? 1 : 0);
+  const count = alerts.filter((a) => a.level !== 'info').length;
   return (
     <div className="notif" ref={ref}>
       <button
@@ -299,8 +317,6 @@ function Notifications() {
               className={`notif-item ${a.level}`}
               onClick={() => {
                 if (a.section) st().setSection(a.section);
-                if (a.productId) st().openProduct(a.productId);
-                if (a.cell) st().showCell(a.cell);
                 setOpen(false);
               }}
             >
@@ -315,6 +331,45 @@ function Notifications() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Состояние обмена с учётной системой. */
+function SyncChip() {
+  const w = useWarehouse();
+  const sync = useStore((s) => (s.currentId ? s.sync[s.currentId] : undefined));
+  const inv = useInventory();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((x) => x + 1), 15000);
+    return () => clearInterval(t);
+  }, []);
+  if (!w) return null;
+  const conn = w.connection;
+  const live = conn.active && conn.type !== 'none' && conn.type !== 'file';
+  const at = inv?.updatedAt || sync?.at;
+  const label =
+    conn.type === 'demo'
+      ? 'Демо-поток'
+      : conn.type === 'rest'
+        ? 'REST'
+        : conn.type === 'ws'
+          ? 'WebSocket'
+          : conn.type === 'file'
+            ? 'Файл'
+            : 'Нет источника';
+  return (
+    <button
+      className={`sync-chip ${sync?.error ? 'bad' : live ? 'live' : ''}`}
+      onClick={() => useStore.getState().setSection('settings')}
+      title="Источник данных: учётная система"
+    >
+      <i />
+      <span>
+        {label}
+        {at ? ` · ${timeAgo(at)}` : ''}
+      </span>
+    </button>
   );
 }
 
@@ -341,6 +396,7 @@ export function TopBar() {
   return (
     <header className="topbar">
       <WarehouseSwitcher />
+      <SyncChip />
       <div className="grow" />
       <GlobalSearch />
       <Notifications />

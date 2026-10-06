@@ -206,6 +206,124 @@ const P: Record<string, ReactElement> = {
     </>
   ),
   pulse: <path d="M3 12h4l2.5-6 4 12 2.5-6h5" />,
+  shield: (
+    <>
+      <path d="M12 3 4.5 6v6c0 4.5 3.2 7.8 7.5 9 4.3-1.2 7.5-4.5 7.5-9V6z" />
+      <path d="m8.8 12 2.2 2.2 4.2-4.4" />
+    </>
+  ),
+  pallet: (
+    <>
+      <path d="M3 15h18M3 19h18M5 15v4M12 15v4M19 15v4" />
+      <path d="M6 15V7h12v8M6 11h12" />
+    </>
+  ),
+  cylinder: (
+    <>
+      <path d="M9 7.5a3 3 0 0 1 6 0V20a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1z" />
+      <path d="M10.5 4.5V3h3v1.5M9 11h6" />
+    </>
+  ),
+  stairs: <path d="M3 20h4v-4h4v-4h4V8h4V4h2M3 20h18" />,
+  floors: (
+    <>
+      <path d="m12 3 9 4.5-9 4.5-9-4.5z" />
+      <path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5" />
+    </>
+  ),
+  metal: (
+    <>
+      <path d="M3 16.5 14 6l7 3-11 10.5z" />
+      <path d="M3 16.5 10 19.5M14 6l-1.5 6" />
+    </>
+  ),
+  bucket: (
+    <>
+      <path d="M5 7h14l-1.5 13a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
+      <path d="M5 7a7 3 0 0 1 14 0M8 11h8" />
+    </>
+  ),
+  wrench: (
+    <path d="M14.5 4a4.5 4.5 0 0 0-4.2 6.1L4 16.4V20h3.6l6.3-6.3A4.5 4.5 0 0 0 20 9.5l-2.8 2.8-3-.8-.8-3L16.2 5.7A4.5 4.5 0 0 0 14.5 4z" />
+  ),
+  issue: (
+    <>
+      <path d="M4 20h16M6 20v-7h12v7" />
+      <path d="M12 3v7M8.5 6.5 12 10l3.5-3.5" />
+    </>
+  ),
+  tree: (
+    <>
+      <path d="M12 3 6 12h3l-4 6h14l-4-6h3z" />
+      <path d="M12 18v3" />
+    </>
+  ),
+  scan: (
+    <>
+      <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" />
+      <path d="M8 8v8M11 8v8M14 8v8M17 8v8" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </>
+  ),
+  weight: (
+    <>
+      <path d="M6.5 9h11l2 11h-15z" />
+      <circle cx="12" cy="6" r="2.5" />
+    </>
+  ),
+  grid: (
+    <>
+      <path d="M4 4h16v16H4zM4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16" />
+    </>
+  ),
+  ruler: (
+    <>
+      <path d="M8 2.5h8v19H8z" />
+      <path d="M8 6.5h3M8 10.5h4.5M8 14.5h3M8 18.5h4.5" />
+    </>
+  ),
+  camera: (
+    <>
+      <path d="M4 8h3l1.5-2.5h7L17 8h3v11H4z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </>
+  ),
+  cut: (
+    <>
+      <path d="M3 12h18" strokeDasharray="2.5 2.5" />
+      <path d="M7 12V5h10v7M7 15v4h10v-4" />
+    </>
+  ),
+  virtual: (
+    <>
+      <path d="M4 6h16v10H4zM9 20h6M12 16v4" />
+      <path d="M8 10h3M8 12.5h6" />
+    </>
+  ),
+  people: (
+    <>
+      <circle cx="9" cy="7.5" r="3" />
+      <path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 4.8a3 3 0 0 1 0 5.4M17.5 14.2a5.5 5.5 0 0 1 3 5.8" />
+    </>
+  ),
+  external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />,
+  refresh: (
+    <>
+      <path d="M20 12a8 8 0 1 1-2.3-5.7L20 8.6" />
+      <path d="M20 4v4.6h-4.6" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof P;
@@ -484,6 +602,119 @@ export const ILLUSTRATIONS: Record<string, () => ReactElement> = {
     </svg>
   ),
   zone: () => <Iso boxes={[{ x: -2, y: -1, z: 0, w: 9, d: 7, h: 0.3, c: '#3b82f6', o: 0.85 }]} scale={4.6} oy={34} />,
+  'rack-cantilever': () => (
+    <Iso
+      boxes={[
+        ...[0, 3, 6].map((x) => ({ x, y: 1.6, z: 0, w: 0.4, d: 0.5, h: 6, c: '#56606b' })),
+        ...[0, 3, 6].map((x) => ({ x: x - 0.1, y: 0, z: 0, w: 0.6, d: 3.6, h: 0.3, c: '#56606b' })),
+        ...[1.6, 3.4, 5.2].flatMap((z) =>
+          [0, 3, 6].map((x) => ({ x: x + 0.05, y: 0, z, w: 0.3, d: 1.7, h: 0.25, c: '#f08a24' })),
+        ),
+        { x: -0.5, y: 0.3, z: 1.85, w: 7.4, d: 1.2, h: 0.6, c: '#8c96a3' },
+        { x: -0.5, y: 0.3, z: 3.65, w: 7.4, d: 1.2, h: 0.45, c: '#a0a9b5' },
+      ]}
+      scale={4.4}
+      ox={36}
+      oy={42}
+    />
+  ),
+  'rack-floor': () => (
+    <Iso
+      boxes={[
+        { x: -2, y: -1, z: 0, w: 9, d: 7, h: 0.08, c: '#f2c94c', o: 0.9 },
+        { x: -1.4, y: -0.4, z: 0.1, w: 3.6, d: 2.6, h: 0.35, c: '#b98a4e' },
+        { x: -1.4, y: -0.4, z: 0.45, w: 3.6, d: 2.6, h: 1.8, c: '#d4a373' },
+        { x: 3.2, y: 2.6, z: 0.1, w: 3.6, d: 2.6, h: 0.9, c: '#8c96a3' },
+      ]}
+      scale={4.4}
+      oy={36}
+    />
+  ),
+  'rack-cylinder': () => (
+    <svg viewBox="0 0 72 60" width="72" height="60" aria-hidden>
+      <rect x="10" y="44" width="52" height="5" rx="1" fill="#e2b93b" />
+      {[14, 23, 32, 41, 50].map((x, i) => (
+        <g key={x}>
+          <rect
+            x={x}
+            y="14"
+            width="8"
+            height="30"
+            rx="4"
+            fill={['#3b8fe0', '#3b8fe0', '#8d96a3', '#4b9b5f', '#d93a3a'][i]}
+          />
+          <rect x={x + 2} y="10" width="4" height="5" rx="1" fill="#475569" />
+        </g>
+      ))}
+      <rect x="10" y="24" width="52" height="2.2" fill="#334155" />
+    </svg>
+  ),
+  mezzanine: () => (
+    <Iso
+      boxes={[
+        ...[0, 6].flatMap((x) => [0, 4].map((y) => ({ x, y, z: 0, w: 0.3, d: 0.3, h: 3.2, c: '#5b6b7f' }))),
+        { x: 0, y: 0, z: 3.2, w: 6.3, d: 4.3, h: 0.25, c: '#9aa4ae' },
+        ...[0.4, 2.2, 4].map((x) => ({ x, y: 0.4, z: 3.45, w: 1.2, d: 3.4, h: 2.1, c: '#64748b' })),
+        ...[0, 1, 2, 3].map((i) => ({ x: -1.6, y: 0.5 + i * 0.8, z: i * 0.8, w: 1.2, d: 0.8, h: 0.2, c: '#f2c94c' })),
+      ]}
+      scale={4.2}
+      ox={38}
+      oy={40}
+    />
+  ),
+  'room-yard': () => (
+    <Iso
+      boxes={[
+        { x: -2, y: -1, z: 0, w: 9, d: 7, h: 0.15, c: '#9aa3a8' },
+        ...[-2, 1, 4, 7].map((x) => ({ x, y: -1, z: 0.15, w: 0.2, d: 0.2, h: 1.6, c: '#64748b' })),
+        { x: -2, y: -1, z: 1.4, w: 9.2, d: 0.1, h: 0.15, c: '#64748b' },
+        { x: 0, y: 2, z: 0.15, w: 5, d: 1.4, h: 0.6, c: '#7d8794' },
+      ]}
+      scale={4.4}
+      oy={34}
+    />
+  ),
+  'room-canopy': () => (
+    <Iso
+      boxes={[
+        { x: -2, y: -1, z: 0, w: 9, d: 7, h: 0.12, c: '#d9d3c6' },
+        ...[-2, 6.6].flatMap((x) => [-1, 5.6].map((y) => ({ x, y, z: 0, w: 0.4, d: 0.4, h: 4, c: '#8a6f4a' }))),
+        { x: -2.2, y: -1.2, z: 4, w: 9.4, d: 7.4, h: 0.25, c: '#b08a4f', o: 0.9 },
+      ]}
+      scale={4.2}
+      oy={36}
+    />
+  ),
+  counter: () => (
+    <Iso
+      boxes={[
+        { x: 0, y: 1, z: 0, w: 6, d: 1.6, h: 2.4, c: '#0ea5e9' },
+        { x: 0, y: 0.6, z: 2.4, w: 6, d: 2.4, h: 0.25, c: '#e2e8f0' },
+        { x: 0, y: 1.6, z: 2.65, w: 6, d: 0.2, h: 2.4, c: '#bae6fd', o: 0.6 },
+      ]}
+      scale={4.6}
+      oy={38}
+    />
+  ),
+  worker: () => (
+    <svg viewBox="0 0 72 60" width="72" height="60" aria-hidden>
+      <ellipse cx="36" cy="54" rx="11" ry="3" fill="#00000022" />
+      <rect x="29" y="38" width="5" height="15" rx="2" fill="#334155" />
+      <rect x="38" y="38" width="5" height="15" rx="2" fill="#334155" />
+      <rect x="27" y="22" width="18" height="19" rx="6" fill="#f97316" />
+      <rect x="27" y="29" width="18" height="2.5" fill="#fde68a" />
+      <circle cx="36" cy="16" r="6.5" fill="#f2c7a5" />
+      <path d="M29 14a7 7 0 0 1 14 0z" fill="#facc15" />
+    </svg>
+  ),
+  tree: () => (
+    <svg viewBox="0 0 72 60" width="72" height="60" aria-hidden>
+      <ellipse cx="36" cy="54" rx="14" ry="3" fill="#00000022" />
+      <rect x="33" y="38" width="6" height="16" rx="2" fill="#8b5a2b" />
+      <circle cx="36" cy="26" r="15" fill="#3f9b4f" />
+      <circle cx="30" cy="22" r="7" fill="#5cb85c" />
+    </svg>
+  ),
 };
 
 export function Illustration({ name }: { name: string }) {

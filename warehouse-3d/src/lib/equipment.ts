@@ -123,6 +123,33 @@ export const EQUIPMENT: Record<EquipmentType, EquipmentSpec> = {
     color: '#a78bfa',
     hint: 'Бытовое помещение',
   },
+  counter: {
+    title: 'Окно выдачи',
+    group: 'other',
+    length: 2.4,
+    width: 0.8,
+    height: 1.1,
+    color: '#0ea5e9',
+    hint: 'Стойка выдачи ТМЦ кладовым производства',
+  },
+  worker: {
+    title: 'Сотрудник',
+    group: 'other',
+    length: 0.5,
+    width: 0.35,
+    height: 1.75,
+    color: '#f97316',
+    hint: 'Кладовщик, водитель погрузчика',
+  },
+  tree: {
+    title: 'Дерево',
+    group: 'other',
+    length: 3,
+    width: 3,
+    height: 6,
+    color: '#3f9b4f',
+    hint: 'Озеленение территории',
+  },
 };
 
 export function newEquipment(type: EquipmentType, x: number, y: number, rotation = 0, index = 1): Equipment {
@@ -138,6 +165,6 @@ export function newEquipment(type: EquipmentType, x: number, y: number, rotation
     width: s.width,
     height: s.height,
     color: s.color,
-    active: type === 'dock' || type === 'forklift' ? true : undefined,
+    active: type === 'dock' || type === 'forklift' || type === 'counter' ? true : undefined,
   };
 }

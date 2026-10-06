@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
 import { useStore } from './store';
 import type { Section } from './types';
-import { useConnectorRunner } from './lib/connectors';
+import { ConnectorRunners } from './lib/connectors';
 import { ConfirmDialog, MobileTabs, NavRail, Toasts, TopBar } from './components/shell/Shell';
 import { HomePage } from './pages/HomePage';
 import { WarehousePage } from './pages/WarehousePage';
-import { StockPage } from './pages/StockPage';
-import { DocsPage } from './pages/DocsPage';
+import { CellsPage } from './pages/CellsPage';
+import { ItemsPage } from './pages/ItemsPage';
+import { TarePage } from './pages/TarePage';
+import { ControlPage } from './pages/ControlPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -16,13 +18,13 @@ function useHotkeys() {
       const t = e.target as HTMLElement;
       const typing = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT';
       const s = useStore.getState();
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing && s.section === 'warehouse') {
         e.preventDefault();
         if (e.shiftKey) s.redo();
         else s.undo();
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y' && !typing) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y' && !typing && s.section === 'warehouse') {
         e.preventDefault();
         s.redo();
         return;
@@ -55,12 +57,14 @@ function Page({ section }: { section: Section }) {
   switch (section) {
     case 'warehouse':
       return <WarehousePage />;
-    case 'stock':
-      return <StockPage />;
-    case 'inbound':
-      return <DocsPage key="inbound" kind="receipt" />;
-    case 'orders':
-      return <DocsPage key="orders" kind="order" />;
+    case 'cells':
+      return <CellsPage />;
+    case 'items':
+      return <ItemsPage />;
+    case 'tare':
+      return <TarePage />;
+    case 'control':
+      return <ControlPage />;
     case 'analytics':
       return <AnalyticsPage />;
     case 'settings':
@@ -74,7 +78,6 @@ export function App() {
   const hydrated = useStore((s) => s.hydrated);
   const theme = useStore((s) => s.theme);
   const section = useStore((s) => s.section);
-  useConnectorRunner();
   useHotkeys();
 
   useEffect(() => {
@@ -85,6 +88,7 @@ export function App() {
 
   return (
     <div className="shell">
+      <ConnectorRunners />
       <NavRail />
       <main className="main">
         <TopBar />

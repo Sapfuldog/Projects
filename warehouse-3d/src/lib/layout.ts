@@ -1,7 +1,7 @@
 import type { Rack, Warehouse, Zone } from '../types';
 import { bbox } from './geometry';
 import { uid } from './demo';
-import { RACK_SPEC, RACK_TEMPLATES } from './rack';
+import { RACK_SPEC, RACK_TEMPLATES, rackDepth } from './rack';
 
 /** Следующий код стеллажа: A → B … Z → AA; R01 → R02; иначе добавляем номер. */
 export function nextCode(start: string, i: number): string {
@@ -54,7 +54,7 @@ export function generateRows(zone: Zone, p: GenParams): Rack[] {
   const spec = RACK_SPEC[tpl.rack.kind];
   const S = tpl.rack.sectionLength / 1000;
   const U = spec.upright / 1000;
-  const D = tpl.rack.depth / 1000;
+  const D = rackDepth({ ...tpl.rack, id: '', zoneId: '', code: '', x: 0, y: 0, rotation: 0, overrides: {} }) / 1000;
   const sections = p.autoSections ? Math.max(1, Math.floor((along - 2 * p.margin - U) / (S + U))) : p.sections;
 
   const offsets: number[] = [];
@@ -82,5 +82,8 @@ export function generateRows(zone: Zone, p: GenParams): Rack[] {
     groundLevel: tpl.rack.groundLevel,
     tiers: tpl.rack.tiers.map((t) => ({ ...t })),
     overrides: {},
+    maxLoad: tpl.rack.maxLoad ? Math.round((tpl.rack.maxLoad / tpl.rack.sections) * sections) : undefined,
+    sectionLoad: tpl.rack.sectionLoad,
+    doubleSided: tpl.rack.doubleSided,
   }));
 }

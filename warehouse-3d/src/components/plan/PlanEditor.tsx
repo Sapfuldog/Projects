@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Pt, Rack, Warehouse } from '../../types';
+import type { Equipment, Pt, Rack, Warehouse } from '../../types';
 import { useStore, useWarehouse } from '../../store';
 import { useCells, useFills, warehouseBounds } from '../../lib/derived';
 import { bbox, dist, fmt, localToPlan, pointInPolygon, polygonCentroid, round } from '../../lib/geometry';
 import { RACK_SPEC, rackFootprint, rackLength } from '../../lib/rack';
+import { EQUIPMENT } from '../../lib/equipment';
+import { rectCorners } from '../../lib/geometry';
 import { fillColor } from '../../lib/fill';
 
 interface View {
@@ -17,6 +19,7 @@ type Drag =
   | { kind: 'pan'; sx: number; sy: number; cx: number; cy: number; moved: boolean }
   | { kind: 'vertex'; target: 'room' | 'zone'; id: string; index: number }
   | { kind: 'rack'; id: string; dx: number; dy: number; sx: number; sy: number; moved: boolean }
+  | { kind: 'equip'; id: string; dx: number; dy: number; sx: number; sy: number; moved: boolean }
   | {
       kind: 'shape';
       target: 'room' | 'zone';
@@ -147,9 +150,67 @@ function RackShape({
   );
 }
 
+/** Объект конструктора на плане. */
+function EquipShape({
+  e,
+  scale,
+  selected,
+  onDown,
+}: {
+  e: Equipment;
+  scale: number;
+  selected: boolean;
+  onDown?: (ev: React.PointerEvent) => void;
+}) {
+  const pts = rectCorners(e.x, e.y, e.length, e.width, e.rotation);
+  const solid = e.type === 'wall' || e.type === 'column' || e.type === 'partition';
+  const fs = Math.min(11 / scale, e.width * 0.5);
+  let angle = e.rotation % 180;
+  if (angle > 90) angle -= 180;
+  return (
+    <g onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
+      <polygon
+        points={pts.map((p) => `${p.x},${p.y}`).join(' ')}
+        fill={e.color}
+        fillOpacity={solid ? 0.95 : e.type === 'workzone' ? 0.25 : 0.55}
+        stroke={selected ? '#38bdf8' : e.color}
+        strokeWidth={selected ? 3 : 1}
+        strokeDasharray={e.type === 'workzone' ? '4 3' : undefined}
+        vectorEffect="non-scaling-stroke"
+      />
+      {e.type === 'door' && (
+        <path
+          d={`M ${pts[0].x} ${pts[0].y} A ${e.length} ${e.length} 0 0 1 ${pts[1].x} ${pts[1].y}`}
+          fill="none"
+          stroke={e.color}
+          strokeDasharray="3 3"
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+      )}
+      {!solid && e.length * scale > 40 && (
+        <text
+          x={e.x}
+          y={e.y}
+          fontSize={fs}
+          textAnchor="middle"
+          dominantBaseline="central"
+          className="plan-equip-label"
+          transform={`rotate(${angle} ${e.x} ${e.y})`}
+          pointerEvents="none"
+        >
+          {e.name}
+        </text>
+      )}
+    </g>
+  );
+}
+
 export function PlanEditor() {
   const w = useWarehouse();
   const step = useStore((s) => s.step);
+  const section = useStore((s) => s.section);
+  const placing = useStore((s) => s.placing);
   const selection = useStore((s) => s.selection);
   const draw = useStore((s) => s.draw);
   const snap = useStore((s) => s.snap);
@@ -241,6 +302,11 @@ export function PlanEditor() {
   };
 
   const onBgDown = (e: React.PointerEvent) => {
+    if (placing && e.button === 0) {
+      const p = snapPt(toWorld(e.clientX, e.clientY));
+      st().placeEquipment(p.x, p.y);
+      return;
+    }
     if (draw && e.button === 0) {
       const p = drawPoint(toWorld(e.clientX, e.clientY));
       const first = draw.points[0];
@@ -281,6 +347,14 @@ export function PlanEditor() {
       }
       const q = snapPt({ x: p.x - d.dx, y: p.y - d.dy });
       st().updateRack(d.id, { x: q.x, y: q.y }, false);
+    } else if (d.kind === 'equip') {
+      if (!d.moved) {
+        if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) < 5) return;
+        st().checkpoint();
+        d.moved = true;
+      }
+      const q = snapPt({ x: p.x - d.dx, y: p.y - d.dy });
+      st().updateEquipment(d.id, { x: q.x, y: q.y }, false);
     } else if (d.kind === 'shape') {
       if (!d.moved) {
         if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) < 5) return;
@@ -550,6 +624,54 @@ export function PlanEditor() {
             }
           />
         ))}
+
+        {/* Оборудование и элементы здания */}
+        {w.equipment.map((eq) => (
+          <EquipShape
+            key={eq.id}
+            e={eq}
+            scale={view.scale}
+            selected={selection?.kind === 'equipment' && selection.id === eq.id}
+            onDown={
+              draw || placing
+                ? undefined
+                : (ev) => {
+                    if (ev.button !== 0) return;
+                    ev.stopPropagation();
+                    st().select({ kind: 'equipment', id: eq.id });
+                    if (section === 'warehouse') {
+                      const p = toWorld(ev.clientX, ev.clientY);
+                      drag.current = {
+                        kind: 'equip',
+                        id: eq.id,
+                        dx: p.x - eq.x,
+                        dy: p.y - eq.y,
+                        sx: ev.clientX,
+                        sy: ev.clientY,
+                        moved: false,
+                      };
+                      svgRef.current?.setPointerCapture(ev.pointerId);
+                    }
+                  }
+            }
+          />
+        ))}
+        {placing && cursor && (
+          <polygon
+            points={rectCorners(
+              snapPt(cursor).x,
+              snapPt(cursor).y,
+              EQUIPMENT[placing].length,
+              EQUIPMENT[placing].width,
+              0,
+            )
+              .map((p) => `${p.x},${p.y}`)
+              .join(' ')}
+            className="place-ghost"
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+        )}
 
         {/* Подписи и размеры — поверх стеллажей */}
         <g pointerEvents="none">

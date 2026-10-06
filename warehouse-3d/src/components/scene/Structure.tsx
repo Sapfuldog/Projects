@@ -32,6 +32,7 @@ function outlineGeometry(points: Pt[], y0: number, y1: number, verticals = true)
 export function RoomMesh({ room, selected, showWalls }: { room: Room; selected: boolean; showWalls: boolean }) {
   const select = useStore((s) => s.select);
   const step = useStore((s) => s.step);
+  const section = useStore((s) => s.section);
   const { floor, walls, outline } = useMemo(() => {
     const floor = new THREE.ShapeGeometry(planShape(room.points));
     const n = room.points.length;
@@ -52,7 +53,7 @@ export function RoomMesh({ room, selected, showWalls }: { room: Room; selected: 
   }, [room.points, room.height]);
 
   const onClick = (e: ThreeEvent<MouseEvent>) => {
-    if (step !== 'rooms' && step !== 'objects') return;
+    if (section !== 'warehouse' || (step !== 'rooms' && step !== 'objects')) return;
     e.stopPropagation();
     select({ kind: 'room', id: room.id });
   };
@@ -99,6 +100,7 @@ export function ZoneMesh({
 }) {
   const select = useStore((s) => s.select);
   const step = useStore((s) => s.step);
+  const section = useStore((s) => s.section);
   const { floor, volume, outline } = useMemo(() => {
     const shape = planShape(zone.points);
     return {
@@ -109,7 +111,7 @@ export function ZoneMesh({
   }, [zone.points, zone.height]);
 
   const onClick = (e: ThreeEvent<MouseEvent>) => {
-    if (step !== 'zones') return;
+    if (section === 'warehouse' && step !== 'zones') return;
     e.stopPropagation();
     select({ kind: 'zone', id: zone.id });
   };

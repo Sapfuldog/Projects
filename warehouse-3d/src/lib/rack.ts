@@ -268,6 +268,14 @@ export function cellViewpoint(w: Warehouse, c: Cell): { x: number; y: number; z:
     }
     if (clear > best.clear) best = { side, clear };
   }
+  // Камера в проходе напротив ячейки, немного сбоку вдоль ряда и выше — чтобы был виден контекст
   const d = Math.max(1.5, Math.min(best.clear - 0.3, 6));
-  return { x: c.cx + best.side * nx * d, y: c.cy + 1 + d * 0.25, z: c.cz + best.side * ny * d };
+  const ax = Math.cos(a);
+  const ay = Math.sin(a);
+  const along = 3.5;
+  return {
+    x: c.cx + best.side * nx * d + ax * along,
+    y: c.cy + 2.2 + (6 - d) * 0.6,
+    z: c.cz + best.side * ny * d + ay * along,
+  };
 }

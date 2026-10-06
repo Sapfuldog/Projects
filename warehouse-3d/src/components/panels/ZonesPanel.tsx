@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useStore, useWarehouse } from '../../store';
 import { bbox, fmt, insetRect, polygonArea, polygonInside, selfIntersects } from '../../lib/geometry';
 import type { Pt } from '../../types';
@@ -5,6 +6,7 @@ import { ZONE_TYPES } from '../../lib/demo';
 import { rackHeight } from '../../lib/rack';
 import type { ZoneType } from '../../types';
 import { ColorField, Hint, Num, Section, Select, Text, Warn } from '../ui';
+import { Tile } from './EquipmentPanel';
 import { VerticesEditor } from './VerticesEditor';
 
 /** Зона по умолчанию: для прямоугольного помещения — с отступом 1 м, для сложной формы — по контуру помещения. */
@@ -14,15 +16,26 @@ function defaultZoneShape(points: Pt[]): Pt[] {
   return isRect ? insetRect(points, 1) : points.map((p) => ({ ...p }));
 }
 
+const ZONE_TYPE_COLORS: Record<ZoneType, string> = {
+  rack: '#3b82f6',
+  floor: '#14b8a6',
+  receiving: '#f59e0b',
+  shipping: '#ef4444',
+  buffer: '#06b6d4',
+  other: '#94a3b8',
+};
+
 export function ZonesPanel() {
   const w = useWarehouse();
   const selection = useStore((s) => s.selection);
   const draw = useStore((s) => s.draw);
   const st = useStore.getState;
+  const [roomId, setRoomId] = useState('');
   if (!w) return null;
 
   const zone = selection?.kind === 'zone' ? w.zones.find((z) => z.id === selection.id) : undefined;
   const room = zone && w.rooms.find((r) => r.id === zone.roomId);
+  const targetRoom = w.rooms.find((r) => r.id === (roomId || room?.id)) ?? w.rooms[0];
 
   if (!w.rooms.length) {
     return (
@@ -51,22 +64,33 @@ export function ZonesPanel() {
           Зона — участок помещения с одним типом хранения и <b>предельной высотой размещения</b> (например, под фермами,
           спринклерами или кран-балкой). Высота зоны ограничивает высоту стеллажей.
         </Hint>
-        <div className="row wrap">
-          {w.rooms.map((r) => (
-            <button
-              key={r.id}
-              className="btn small primary"
-              onClick={() => st().addZone(r.id, defaultZoneShape(r.points))}
-            >
-              + Зона в «{r.name}»
-            </button>
+        <Select
+          label="Добавить в помещение"
+          value={targetRoom?.id ?? ''}
+          onChange={setRoomId}
+          options={w.rooms.map((r) => ({ value: r.id, label: r.name }))}
+        />
+        <div className="tiles">
+          {(Object.keys(ZONE_TYPES) as ZoneType[]).map((t) => (
+            <Tile
+              key={t}
+              art="zone"
+              title={ZONE_TYPES[t]}
+              onClick={() => {
+                if (!targetRoom) return;
+                const id = st().addZone(targetRoom.id, defaultZoneShape(targetRoom.points));
+                const n = w.zones.length + 1;
+                st().updateZone(id, { type: t, name: `${ZONE_TYPES[t]} ${n}`, color: ZONE_TYPE_COLORS[t] }, false);
+              }}
+            />
           ))}
-          <button
-            className={`btn small ${draw?.target === 'zone' && !draw.replaceId ? 'active' : ''}`}
+          <Tile
+            art="draw"
+            title="Нарисовать"
+            active={draw?.target === 'zone' && !draw.replaceId}
             onClick={() => st().startDraw('zone')}
-          >
-            ✎ Нарисовать зону
-          </button>
+            hint="Нарисовать контур зоны по углам на плане"
+          />
         </div>
       </Section>
 

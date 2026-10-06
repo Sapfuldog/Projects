@@ -7,9 +7,18 @@ import type {
   CellOverride,
   ColorMode,
   Connection,
+  Doc,
+  DocKind,
+  DocLine,
+  DocStatus,
+  Equipment,
+  EquipmentType,
+  Inventory,
+  Product,
   Pt,
   Rack,
   Room,
+  Section,
   Selection,
   Step,
   SyncStatus,
@@ -18,6 +27,11 @@ import type {
 } from './types';
 import { demoWarehouse, emptyWarehouse, newRoom, newZone, uid } from './lib/demo';
 import { pointInPolygon, polygonCentroid } from './lib/geometry';
+import { newEquipment } from './lib/equipment';
+import { applyOp, emptyInventory, type OpInput } from './lib/inventory';
+import { docNumber, generateDemoInventory } from './lib/demoInventory';
+import { cellsOf } from './lib/derived';
+import { cellViewpoint } from './lib/rack';
 
 export type ViewMode = '3d' | 'plan' | 'split';
 
@@ -28,11 +42,39 @@ export interface DrawState {
   points: Pt[];
 }
 
-interface Show {
+export interface Show {
   walls: boolean;
   zones: boolean;
-  labels: boolean;
+  racks: boolean;
   cells: boolean;
+  cargo: boolean;
+  equipment: boolean;
+  labels: boolean;
+  callouts: boolean;
+}
+
+export const DEFAULT_SHOW: Show = {
+  walls: true,
+  zones: true,
+  racks: true,
+  cells: true,
+  cargo: true,
+  equipment: true,
+  labels: true,
+  callouts: true,
+};
+
+export type FillFilter = 'all' | 'empty' | 'partial' | 'full';
+
+export interface Toast {
+  id: number;
+  text: string;
+  kind: 'ok' | 'info' | 'error';
+}
+
+export interface User {
+  name: string;
+  role: string;
 }
 
 export interface Focus {
@@ -64,6 +106,21 @@ interface State {
   past: Warehouse[][];
   future: Warehouse[][];
   hydrated: boolean;
+
+  section: Section;
+  products: Product[];
+  inventory: Record<string, Inventory>;
+  user: User;
+  zoneFilter: string | null;
+  fillFilter: FillFilter;
+  productFilter: string | null;
+  placing: EquipmentType | null;
+  toasts: Toast[];
+  notifSeenAt: number;
+  /** Подсвеченные ячейки (маршрут сборки, размещение поставки) */
+  highlight: string[];
+  openProductId: string | null;
+  openDocId: string | null;
 }
 
 interface Actions {
@@ -117,6 +174,40 @@ interface Actions {
   checkpoint: () => void;
   undo: () => void;
   redo: () => void;
+
+  setSection: (s: Section, step?: Step) => void;
+  setZoneFilter: (id: string | null) => void;
+  setFillFilter: (f: FillFilter) => void;
+  setProductFilter: (id: string | null) => void;
+  resetFilters: () => void;
+  setUser: (u: Partial<User>) => void;
+  toast: (text: string, kind?: Toast['kind']) => void;
+  dismissToast: (id: number) => void;
+  markNotificationsSeen: () => void;
+  setHighlight: (addresses: string[]) => void;
+  openProduct: (id: string | null) => void;
+  openDoc: (id: string | null) => void;
+  /** Показать ячейку: перейти к 3D, выделить и навести камеру */
+  showCell: (address: string) => void;
+
+  startPlacing: (t: EquipmentType | null) => void;
+  placeEquipment: (x: number, y: number) => void;
+  addEquipment: (e: Equipment) => void;
+  updateEquipment: (id: string, patch: Partial<Equipment>, record?: boolean) => void;
+  deleteEquipment: (id: string) => void;
+
+  addProduct: (p: Product) => void;
+  updateProduct: (id: string, patch: Partial<Product>) => void;
+  deleteProduct: (id: string) => void;
+  importProducts: (list: Product[]) => void;
+
+  /** Провести складские операции по текущему складу */
+  runOps: (ops: OpInput[]) => void;
+  createDoc: (kind: DocKind, partner: string, lines: DocLine[], note?: string) => Doc | undefined;
+  setDocStatus: (id: string, status: DocStatus) => void;
+  /** Провести документ: операции + статус «выполнен» */
+  completeDoc: (id: string, ops: OpInput[]) => void;
+  resetDemoInventory: () => void;
 }
 
 export type Store = State & Actions;
@@ -191,10 +282,10 @@ export const useStore = create<Store>()(
         sync: {},
         step: 'objects',
         view: 'split',
-        theme: 'light',
+        theme: 'dark',
         selection: null,
         colorMode: 'fill',
-        show: { walls: true, zones: true, labels: true, cells: true },
+        show: { ...DEFAULT_SHOW },
         tierFilter: null,
         draw: null,
         snap: 0.5,
@@ -203,6 +294,19 @@ export const useStore = create<Store>()(
         past: [],
         future: [],
         hydrated: false,
+        section: 'home',
+        products: [],
+        inventory: {},
+        user: { name: 'Администратор', role: 'Администратор склада' },
+        zoneFilter: null,
+        fillFilter: 'all',
+        productFilter: null,
+        placing: null,
+        toasts: [],
+        notifSeenAt: 0,
+        highlight: [],
+        openProductId: null,
+        openDocId: null,
 
         setStep: (step) =>
           setState((s) => {
@@ -220,9 +324,17 @@ export const useStore = create<Store>()(
         focusOn: (x, y, z, cam) => setState((s) => void (s.focus = { x, y, z, cam, n: (s.focus?.n ?? 0) + 1 })),
 
         createWarehouse: (kind) => {
-          const w = kind === 'demo' ? demoWarehouse() : emptyWarehouse(`Склад ${getState().warehouses.length + 1}`);
+          const w = kind === 'demo' ? demoWarehouse() : emptyWarehouse(`Склад №${getState().warehouses.length + 1}`);
+          const demo = kind === 'demo' ? generateDemoInventory(w) : null;
+          if (kind === 'demo' && getState().warehouses.length)
+            w.name = `Склад №${getState().warehouses.length + 1} — Демо`;
           setState((s) => {
             s.warehouses.push(w);
+            s.inventory[w.id] = demo?.inventory ?? emptyInventory();
+            for (const p of demo?.products ?? []) {
+              const i = s.products.findIndex((x) => x.id === p.id);
+              if (i < 0) s.products.push(p);
+            }
             s.currentId = w.id;
             s.selection = null;
             s.past = [];
@@ -238,8 +350,10 @@ export const useStore = create<Store>()(
           copy.name = `${src.name} (копия)`;
           copy.createdAt = copy.updatedAt = Date.now();
           copy.connection.active = false;
+          if (copy.connection.type === 'internal') copy.connection.type = 'none';
           setState((s) => {
             s.warehouses.push(copy);
+            s.inventory[copy.id] = emptyInventory();
           });
         },
         deleteWarehouse: (id) =>
@@ -247,6 +361,7 @@ export const useStore = create<Store>()(
             s.warehouses = s.warehouses.filter((w) => w.id !== id);
             delete s.fills[id];
             delete s.sync[id];
+            delete s.inventory[id];
             if (s.currentId === id) s.currentId = s.warehouses[0]?.id ?? null;
             s.selection = null;
             s.past = [];
@@ -356,6 +471,16 @@ export const useStore = create<Store>()(
               const o = orig.zones.find((x) => x.id === z.id);
               if (o && zoneIds.has(z.id)) z.points = mv(o.points);
             }
+            const origRoom = orig.rooms.find((x) => x.id === id);
+            if (target === 'room' && origRoom) {
+              for (const e of w.equipment) {
+                const o = orig.equipment.find((x) => x.id === e.id);
+                if (o && pointInPolygon(o, origRoom.points)) {
+                  e.x = Math.round((o.x + dx) * 100) / 100;
+                  e.y = Math.round((o.y + dy) * 100) / 100;
+                }
+              }
+            }
             for (const r of w.racks) {
               const o = orig.racks.find((x) => x.id === r.id);
               if (o && zoneIds.has(r.zoneId)) {
@@ -411,6 +536,153 @@ export const useStore = create<Store>()(
           }
         },
 
+        setSection: (section, step) =>
+          setState((s) => {
+            s.section = section;
+            if (step) s.step = step;
+            s.draw = null;
+            s.placing = null;
+            s.selection = null;
+          }),
+        setZoneFilter: (id) => setState((s) => void (s.zoneFilter = id)),
+        setFillFilter: (f) => setState((s) => void (s.fillFilter = f)),
+        setProductFilter: (id) => setState((s) => void (s.productFilter = id)),
+        resetFilters: () =>
+          setState((s) => {
+            s.zoneFilter = null;
+            s.fillFilter = 'all';
+            s.productFilter = null;
+            s.tierFilter = null;
+            s.search = '';
+          }),
+        setUser: (u) => setState((s) => void Object.assign(s.user, u)),
+        toast: (text, kind = 'ok') => {
+          const id = Date.now() + Math.random();
+          setState((s) => {
+            s.toasts.push({ id, text, kind });
+            if (s.toasts.length > 4) s.toasts.shift();
+          });
+          setTimeout(() => getState().dismissToast(id), 4500);
+        },
+        dismissToast: (id) => setState((s) => void (s.toasts = s.toasts.filter((t) => t.id !== id))),
+        markNotificationsSeen: () => setState((s) => void (s.notifSeenAt = Date.now())),
+        setHighlight: (addresses) => setState((s) => void (s.highlight = addresses)),
+        openProduct: (id) => setState((s) => void (s.openProductId = id)),
+        openDoc: (id) => setState((s) => void (s.openDocId = id)),
+        showCell: (address) => {
+          const w = current();
+          if (!w) return;
+          const c = cellsOf(w).byAddress.get(address);
+          if (!c) return;
+          setState((s) => {
+            if (s.section !== 'home' && s.section !== 'warehouse') s.section = 'home';
+            s.selection = { kind: 'cell', id: c.key, rackId: c.rackId };
+            s.focus = { x: c.cx, y: c.cy, z: c.cz, cam: cellViewpoint(w, c), n: (s.focus?.n ?? 0) + 1 };
+          });
+        },
+
+        startPlacing: (t) =>
+          setState((s) => {
+            s.placing = t;
+            s.draw = null;
+          }),
+        placeEquipment: (x, y) => {
+          const t = getState().placing;
+          const w = current();
+          if (!t || !w) return;
+          const n = w.equipment.filter((e) => e.type === t).length + 1;
+          const e = newEquipment(t, x, y, 0, n);
+          // Высота стены/колонны — по высоте помещения под точкой
+          const room = w.rooms.find((r) => pointInPolygon({ x, y }, r.points));
+          if (room && (t === 'wall' || t === 'column')) e.height = room.height;
+          mutate((w) => void w.equipment.push(e));
+          setState((s) => {
+            s.selection = { kind: 'equipment', id: e.id };
+            s.placing = null;
+          });
+        },
+        addEquipment: (e) => {
+          mutate((w) => void w.equipment.push(e));
+          setState((s) => void (s.selection = { kind: 'equipment', id: e.id }));
+        },
+        updateEquipment: (id, patch, record = true) =>
+          mutate((w) => {
+            const e = w.equipment.find((x) => x.id === id);
+            if (e) Object.assign(e, patch);
+          }, record),
+        deleteEquipment: (id) => mutate((w) => void (w.equipment = w.equipment.filter((e) => e.id !== id))),
+
+        addProduct: (p) => setState((s) => void s.products.push(p)),
+        updateProduct: (id, patch) =>
+          setState((s) => {
+            const p = s.products.find((x) => x.id === id);
+            if (p) Object.assign(p, patch);
+          }),
+        deleteProduct: (id) => setState((s) => void (s.products = s.products.filter((p) => p.id !== id))),
+        importProducts: (list) =>
+          setState((s) => {
+            for (const p of list) {
+              const i = s.products.findIndex((x) => x.sku === p.sku);
+              if (i >= 0) s.products[i] = { ...s.products[i], ...p, id: s.products[i].id };
+              else s.products.push(p);
+            }
+          }),
+
+        runOps: (ops) =>
+          setState((s) => {
+            const id = s.currentId;
+            if (!id || !ops.length) return;
+            const inv = (s.inventory[id] ??= emptyInventory());
+            const at = Date.now();
+            for (const op of ops) {
+              applyOp(inv.stock, op);
+              inv.events.push({ id: uid('ev'), at, user: s.user.name, ...op });
+            }
+            if (inv.events.length > 20000) inv.events.splice(0, inv.events.length - 20000);
+          }),
+        createDoc: (kind, partner, lines, note) => {
+          const id = getState().currentId;
+          if (!id) return undefined;
+          let doc: Doc | undefined;
+          setState((s) => {
+            const inv = (s.inventory[id] ??= emptyInventory());
+            const n = inv.seq++;
+            doc = {
+              id: uid('d'),
+              kind,
+              number: docNumber(kind, n),
+              status: 'new',
+              partner,
+              createdAt: Date.now(),
+              lines,
+              note,
+            };
+            inv.docs.push(doc);
+          });
+          return doc;
+        },
+        setDocStatus: (docId, status) =>
+          setState((s) => {
+            const d = s.currentId ? s.inventory[s.currentId]?.docs.find((x) => x.id === docId) : undefined;
+            if (d) {
+              d.status = status;
+              if (status === 'done') d.doneAt = Date.now();
+            }
+          }),
+        completeDoc: (docId, ops) => {
+          getState().runOps(ops.map((o) => ({ ...o, docId })));
+          getState().setDocStatus(docId, 'done');
+        },
+        resetDemoInventory: () => {
+          const w = current();
+          if (!w) return;
+          const demo = generateDemoInventory(w);
+          setState((s) => {
+            s.inventory[w.id] = demo.inventory;
+            for (const p of demo.products) if (!s.products.some((x) => x.id === p.id)) s.products.push(p);
+          });
+        },
+
         checkpoint: () =>
           setState((s) => {
             s.past.push(getState().warehouses);
@@ -435,7 +707,16 @@ export const useStore = create<Store>()(
     }),
     {
       name: 'warehouse-3d',
-      version: 1,
+      version: 2,
+      migrate: (persisted, version) => {
+        const p = persisted as Partial<State> & { show?: Partial<Show> };
+        if (version < 2) {
+          p.theme = 'dark';
+          p.show = { ...DEFAULT_SHOW, ...(p.show ?? {}) };
+          p.warehouses = (p.warehouses ?? []).map((w) => ({ ...w, equipment: w.equipment ?? [] }));
+        }
+        return p as State;
+      },
       storage: createJSONStorage(() => idbStorage),
       partialize: (s) => ({
         warehouses: s.warehouses,
@@ -447,6 +728,11 @@ export const useStore = create<Store>()(
         colorMode: s.colorMode,
         show: s.show,
         snap: s.snap,
+        section: s.section,
+        products: s.products,
+        inventory: s.inventory,
+        user: s.user,
+        notifSeenAt: s.notifSeenAt,
       }),
       onRehydrateStorage: () => () => {
         const s = useStore.getState();

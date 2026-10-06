@@ -6,6 +6,7 @@ import type { Cell, CellFill, ColorMode, Warehouse } from '../../types';
 import { rackContext, rackFrame } from '../../lib/rack';
 import { COLOR_BLOCKED, fillColor, hashColor, loadColor } from '../../lib/fill';
 import { useStore } from '../../store';
+import { useInventory } from '../../lib/derived';
 
 export const TIER_COLORS = ['#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#22d3ee', '#fb923c', '#a3e635'];
 
@@ -208,7 +209,27 @@ export function CellsLayer({
     setHoverCell(c, `${c.address}${f ? ` · ${Math.round(f.fill * 100)}%` : ''}${c.blocked ? ' · заблокирована' : ''}`);
   };
 
-  const visible = useMemo(() => (tierFilter ? cells.filter((c) => c.tier === tierFilter) : cells), [cells, tierFilter]);
+  const zoneFilter = useStore((s) => s.zoneFilter);
+  const fillFilter = useStore((s) => s.fillFilter);
+  const productFilter = useStore((s) => s.productFilter);
+  const highlight = useStore((s) => s.highlight);
+  const inv = useInventory();
+
+  const visible = useMemo(
+    () =>
+      cells.filter((c) => {
+        if (tierFilter && c.tier !== tierFilter) return false;
+        if (zoneFilter && c.zoneId !== zoneFilter) return false;
+        if (fillFilter !== 'all') {
+          const f = fills[c.address]?.fill ?? 0;
+          if (fillFilter === 'empty' && (f > 0 || c.blocked)) return false;
+          if (fillFilter === 'partial' && !(f > 0 && f < 0.95)) return false;
+          if (fillFilter === 'full' && f < 0.95) return false;
+        }
+        return true;
+      }),
+    [cells, tierFilter, zoneFilter, fillFilter, fills],
+  );
 
   const volumes = useMemo(() => {
     const m = new Float32Array(visible.length * 16);
@@ -269,13 +290,22 @@ export function CellsLayer({
 
   const found = useMemo(() => {
     const q = search.trim().toUpperCase();
-    if (q.length < 2) return null;
+    const stock = inv?.stock ?? {};
+    const byProduct = productFilter ? (c: Cell) => !!stock[c.address]?.[productFilter] : null;
+    const byText =
+      q.length >= 2
+        ? (c: Cell) => c.address.toUpperCase().includes(q) || (fills[c.address]?.sku ?? '').toUpperCase().includes(q)
+        : null;
+    const hl = highlight.length ? new Set(highlight) : null;
+    if (!byProduct && !byText && !hl) return null;
     const hits = visible.filter(
-      (c) => c.address.toUpperCase().includes(q) || (fills[c.address]?.sku ?? '').toUpperCase().includes(q),
+      (c) =>
+        (hl?.has(c.address) ?? false) ||
+        ((byProduct || byText) && (byProduct ? byProduct(c) : true) && (byText ? byText(c) : true)),
     );
-    if (!hits.length || hits.length > 2000) return null;
+    if (!hits.length || hits.length > 3000) return null;
     const m = new Float32Array(hits.length * 16);
-    const col = new Float32Array(hits.length * 3).fill(0);
+    const col = new Float32Array(hits.length * 3);
     hits.forEach((c, i) => {
       tmpQ.setFromAxisAngle(UP, c.rotY);
       tmpM.compose(
@@ -287,7 +317,7 @@ export function CellsLayer({
       col.set([0.02, 0.85, 1], i * 3);
     });
     return { m, col };
-  }, [search, visible, fills]);
+  }, [search, visible, fills, productFilter, inv, highlight]);
 
   const selected = selectedKey ? cells.find((c) => c.key === selectedKey) : undefined;
   const pick = (c: Cell) => select({ kind: 'cell', id: c.key, rackId: c.rackId });

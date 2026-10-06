@@ -77,7 +77,7 @@ export interface Rack {
   overrides: Record<string, CellOverride>;
 }
 
-export type ConnectionType = 'none' | 'demo' | 'rest' | 'ws' | 'file';
+export type ConnectionType = 'none' | 'internal' | 'demo' | 'rest' | 'ws' | 'file';
 
 export interface FieldMapping {
   address: string;
@@ -124,7 +124,108 @@ export interface Warehouse {
   rooms: Room[];
   zones: Zone[];
   racks: Rack[];
+  equipment: Equipment[];
   connection: Connection;
+}
+
+// ---------- Оборудование и элементы здания ----------
+
+export type EquipmentType =
+  | 'wall'
+  | 'partition'
+  | 'door'
+  | 'gate'
+  | 'column'
+  | 'dock'
+  | 'conveyor'
+  | 'forklift'
+  | 'truck'
+  | 'workzone'
+  | 'office'
+  | 'toilet';
+
+/** Объект конструктора: стена, ворота, рампа, конвейер, погрузчик, офис… Размеры в метрах. */
+export interface Equipment {
+  id: string;
+  type: EquipmentType;
+  name: string;
+  /** Центр на плане, м */
+  x: number;
+  y: number;
+  rotation: number;
+  /** Длина (вдоль оси), ширина (поперёк), высота, м */
+  length: number;
+  width: number;
+  height: number;
+  color: string;
+  /** Рампа занята / погрузчик в движении */
+  active?: boolean;
+}
+
+// ---------- Товары, остатки и операции ----------
+
+export interface Product {
+  id: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  /** Вес единицы, кг */
+  weight: number;
+  /** Объём единицы, л */
+  volume: number;
+  /** Минимальный остаток — ниже него уведомление */
+  min: number;
+  /** Норма (100%) для шкалы остатка */
+  max: number;
+  /** Цена за единицу, ₽ */
+  price: number;
+  barcode?: string;
+}
+
+export type OpType = 'receipt' | 'shipment' | 'move' | 'count';
+
+/** Складская операция — строка журнала. */
+export interface OpEvent {
+  id: string;
+  at: number;
+  type: OpType;
+  productId: string;
+  /** Количество (для инвентаризации — расхождение со знаком) */
+  qty: number;
+  from?: string;
+  to?: string;
+  docId?: string;
+  user: string;
+}
+
+export type DocKind = 'receipt' | 'order';
+export type DocStatus = 'new' | 'progress' | 'done' | 'cancelled';
+
+export interface DocLine {
+  productId: string;
+  qty: number;
+}
+
+/** Документ: поставка (приход) или заказ (отгрузка). */
+export interface Doc {
+  id: string;
+  kind: DocKind;
+  number: string;
+  status: DocStatus;
+  partner: string;
+  createdAt: number;
+  doneAt?: number;
+  lines: DocLine[];
+  note?: string;
+}
+
+export interface Inventory {
+  /** Остатки: адрес ячейки → товар → количество */
+  stock: Record<string, Record<string, number>>;
+  events: OpEvent[];
+  docs: Doc[];
+  seq: number;
 }
 
 /** Данные о заполнении ячейки, полученные из подключения. */
@@ -174,13 +275,16 @@ export interface Cell {
   rotY: number;
 }
 
-export type Step = 'objects' | 'rooms' | 'zones' | 'racks' | 'cells' | 'connect' | 'fill';
+export type Step = 'objects' | 'rooms' | 'zones' | 'racks' | 'cells' | 'equipment' | 'other' | 'connect' | 'fill';
+
+export type Section = 'home' | 'warehouse' | 'stock' | 'inbound' | 'orders' | 'analytics' | 'settings';
 
 export type Selection =
   | { kind: 'room'; id: string }
   | { kind: 'zone'; id: string }
   | { kind: 'rack'; id: string }
   | { kind: 'cell'; id: string; rackId: string }
+  | { kind: 'equipment'; id: string }
   | null;
 
 export type ColorMode = 'fill' | 'load' | 'sku' | 'zone';

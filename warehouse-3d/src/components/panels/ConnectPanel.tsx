@@ -7,6 +7,7 @@ import { extractRows, toCSV } from '../../lib/fill';
 import { Hint, Num, Section, Text, download } from '../ui';
 
 const TYPES: { value: ConnectionType; title: string; desc: string }[] = [
+  { value: 'internal', title: 'Внутренний учёт', desc: 'Остатки, поставки и заказы в этом приложении' },
   { value: 'none', title: 'Нет', desc: 'Только структура склада' },
   { value: 'demo', title: 'Демо-симулятор', desc: 'Случайное заполнение для проверки' },
   { value: 'rest', title: 'REST API', desc: 'Опрос WMS / 1С / БД по HTTP' },
@@ -119,6 +120,12 @@ export function ConnectPanel() {
           ))}
         </div>
 
+        {c.type === 'internal' && (
+          <div className="note">
+            Заполнение ячеек считается по остаткам из разделов «Поставки», «Заказы» и «Остатки»: объём товара
+            относительно объёма ячейки (Д×Ш×В), вес — относительно Г.
+          </div>
+        )}
         {c.type === 'demo' && (
           <>
             <div className="grid2">

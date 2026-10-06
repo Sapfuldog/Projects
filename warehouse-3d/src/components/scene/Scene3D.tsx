@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Grid, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useStore, useWarehouse } from '../../store';
-import { useCells, useFills, warehouseBounds } from '../../lib/derived';
-import { polygonCentroid } from '../../lib/geometry';
+import { useCells, useFills, useInventory, useStats, warehouseBounds } from '../../lib/derived';
+import { polygonCentroid, round } from '../../lib/geometry';
 import { rackContext, rackHeight, rackLength } from '../../lib/rack';
-import type { Warehouse } from '../../types';
+import { EQUIPMENT } from '../../lib/equipment';
+import type { Inventory, Warehouse } from '../../types';
+import type { FillStats } from '../../lib/fill';
+import { EquipmentLayer } from './Equipment';
 import { RoomMesh, ZoneMesh } from './Structure';
 import { CellsLayer, RackFrames } from './Racks';
 import { LabelProjector, LabelsLayer, type Label3D, type LabelRegistry } from './Labels';
@@ -65,58 +68,143 @@ function CameraRig({ w }: { w: Warehouse }) {
   return null;
 }
 
-/** Подписи помещений, зон и стеллажей (HTML поверх 3D). */
-function useSceneLabels(w: Warehouse | undefined, step: string, enabled: boolean): Label3D[] {
+/** Подписи помещений, зон и стеллажей + выноски с загрузкой зон (HTML поверх 3D). */
+function useSceneLabels(
+  w: Warehouse | undefined,
+  opts: { step: string; labels: boolean; callouts: boolean; zoneLabels: boolean },
+  byZone: Map<string, FillStats>,
+  inv: Inventory | undefined,
+): Label3D[] {
+  const select = useStore((s) => s.select);
   return useMemo(() => {
-    if (!w || !enabled) return [];
+    if (!w) return [];
     const out: Label3D[] = [];
-    for (const r of w.rooms) {
-      const c = polygonCentroid(r.points);
-      out.push({ key: `r${r.id}`, x: c.x, y: r.elevation + r.height + 0.6, z: c.y, text: r.name, cls: 'room' });
+    if (opts.labels) {
+      for (const r of w.rooms) {
+        const c = polygonCentroid(r.points);
+        out.push({ key: `r${r.id}`, x: c.x, y: r.elevation + r.height + 0.6, z: c.y, text: r.name, cls: 'room' });
+      }
+      if (opts.zoneLabels) {
+        for (const z of w.zones) {
+          const room = w.rooms.find((r) => r.id === z.roomId);
+          const c = polygonCentroid(z.points);
+          out.push({
+            key: `z${z.id}`,
+            x: c.x,
+            y: (room?.elevation ?? 0) + 0.3,
+            z: c.y,
+            text: `${z.name} · ${z.height} м`,
+            cls: 'zone',
+            color: z.color,
+          });
+        }
+      }
+      if (w.racks.length <= 300) {
+        // Подписи стеллажей поочерёдно у разных торцов, чтобы пары «спина к спине» не перекрывались
+        const indexInZone = new Map<string, number>();
+        for (const r of w.racks) {
+          const i = indexInZone.get(r.zoneId) ?? 0;
+          indexInZone.set(r.zoneId, i + 1);
+          const { room } = rackContext(w, r);
+          const half = rackLength(r) / 2000 + 0.5;
+          const a = (r.rotation * Math.PI) / 180;
+          const sgn = i % 2 === 0 ? -1 : 1;
+          out.push({
+            key: `k${r.id}`,
+            x: r.x + sgn * Math.cos(a) * half,
+            y: (room?.elevation ?? 0) + rackHeight(r) / 1000 + 0.3,
+            z: r.y + sgn * Math.sin(a) * half,
+            text: r.code,
+            cls: 'rack',
+          });
+        }
+      }
     }
-    if (step === 'zones' || step === 'objects') {
+    if (opts.callouts) {
+      const activeDocks = w.equipment.filter((e) => e.type === 'dock' && e.active).length;
+      const docks = w.equipment.filter((e) => e.type === 'dock').length;
+      const picking = inv?.docs.filter((d) => d.kind === 'order' && d.status === 'progress').length ?? 0;
+      const openOrders =
+        inv?.docs.filter((d) => d.kind === 'order' && (d.status === 'new' || d.status === 'progress')).length ?? 0;
       for (const z of w.zones) {
         const room = w.rooms.find((r) => r.id === z.roomId);
         const c = polygonCentroid(z.points);
+        const top = Math.max(0.5, ...w.racks.filter((r) => r.zoneId === z.id).map((r) => rackHeight(r) / 1000));
+        const st = byZone.get(z.id);
+        let lines: string[] = [];
+        let icon = 'boxes';
+        let progress: number | undefined;
+        if (st && st.available) {
+          lines = [z.code, `Пусто ${st.free.toLocaleString('ru-RU')}/${st.available.toLocaleString('ru-RU')}`];
+          progress = st.avgFill;
+        } else if (z.type === 'receiving' || z.type === 'shipping') {
+          icon = 'truck';
+          lines = ['Вход/Выход', `${activeDocks} из ${docks} доков активны`];
+        } else if (z.type === 'buffer') {
+          icon = 'orders';
+          lines = [z.code, `Заказов в работе: ${openOrders}`, picking ? `Собирается: ${picking}` : 'Сборка свободна'];
+          progress = openOrders ? Math.min(1, picking / Math.max(1, openOrders)) : 0;
+        } else continue;
         out.push({
-          key: `z${z.id}`,
+          key: `c${z.id}`,
           x: c.x,
-          y: (room?.elevation ?? 0) + 0.3,
+          y: (room?.elevation ?? 0) + top + 1.2,
           z: c.y,
-          text: `${z.name} · ${z.height} м`,
-          cls: 'zone',
+          text: z.name,
+          cls: 'callout',
           color: z.color,
-        });
-      }
-    }
-    if (w.racks.length <= 300) {
-      // Подписи стеллажей поочерёдно у разных торцов, чтобы пары «спина к спине» не перекрывались
-      const indexInZone = new Map<string, number>();
-      for (const r of w.racks) {
-        const i = indexInZone.get(r.zoneId) ?? 0;
-        indexInZone.set(r.zoneId, i + 1);
-        const { room } = rackContext(w, r);
-        const half = rackLength(r) / 2000 + 0.5;
-        const a = (r.rotation * Math.PI) / 180;
-        const sgn = i % 2 === 0 ? -1 : 1;
-        out.push({
-          key: `k${r.id}`,
-          x: r.x + sgn * Math.cos(a) * half,
-          y: (room?.elevation ?? 0) + rackHeight(r) / 1000 + 0.3,
-          z: r.y + sgn * Math.sin(a) * half,
-          text: r.code,
-          cls: 'rack',
+          lines,
+          icon,
+          progress,
+          onClick: () => select({ kind: 'zone', id: z.id }),
         });
       }
     }
     return out;
-  }, [w, step, enabled]);
+  }, [w, opts.step, opts.labels, opts.callouts, opts.zoneLabels, byZone, inv, select]);
 }
 
-export function Scene3D() {
+/** Невидимый пол для расстановки объектов из палитры конструктора. */
+function PlacementPlane() {
+  const placing = useStore((s) => s.placing);
+  const snap = useStore((s) => s.snap) || 0.5;
+  const [ghost, setGhost] = useState<{ x: number; z: number } | null>(null);
+  if (!placing) return null;
+  const spec = EQUIPMENT[placing];
+  return (
+    <>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.005, 0]}
+        onPointerMove={(e) => setGhost({ x: round(e.point.x, snap), z: round(e.point.z, snap) })}
+        onPointerOut={() => setGhost(null)}
+        onClick={(e) => {
+          e.stopPropagation();
+          useStore.getState().placeEquipment(round(e.point.x, snap), round(e.point.z, snap));
+        }}
+      >
+        <planeGeometry args={[4000, 4000]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+      {ghost && (
+        <mesh position={[ghost.x, spec.height / 2, ghost.z]} raycast={() => null}>
+          <boxGeometry args={[spec.length, spec.height, spec.width]} />
+          <meshBasicMaterial color="#38bdf8" wireframe />
+        </mesh>
+      )}
+    </>
+  );
+}
+
+/**
+ * 3D-сцена склада. `monitor` — режим мониторинга (главная): груз и выноски с загрузкой зон.
+ */
+export function Scene3D({ monitor = false }: { monitor?: boolean }) {
   const w = useWarehouse();
   const { cells } = useCells();
   const fills = useFills();
+  const stats = useStats();
+  const inv = useInventory();
   const selection = useStore((s) => s.selection);
   const step = useStore((s) => s.step);
   const show = useStore((s) => s.show);
@@ -125,9 +213,20 @@ export function Scene3D() {
 
   const selectedRackId =
     selection?.kind === 'rack' ? selection.id : selection?.kind === 'cell' ? selection.rackId : undefined;
-  const showCargo = step === 'fill' || step === 'connect' || step === 'objects';
+  const building = !monitor && ['rooms', 'zones', 'racks', 'cells'].includes(step);
+  const showCargo = show.cargo && !building;
   const roomElev = useMemo(() => new Map(w?.rooms.map((r) => [r.id, r.elevation]) ?? []), [w?.rooms]);
-  const labels = useSceneLabels(w, step, show.labels);
+  const labels = useSceneLabels(
+    w,
+    {
+      step,
+      labels: show.labels,
+      callouts: show.callouts && (monitor || step === 'fill'),
+      zoneLabels: !monitor && (step === 'zones' || step === 'objects'),
+    },
+    stats.byZone,
+    inv,
+  );
   const registry = useMemo<LabelRegistry>(() => ({ labels: [], els: new Map(), tip: null }), []);
 
   if (!w) return null;
@@ -142,7 +241,8 @@ export function Scene3D() {
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >
         <color attach="background" args={[bg]} />
-        <hemisphereLight args={['#ffffff', '#7c8797', 1.1]} />
+        <fog attach="fog" args={[bg, 160, 420]} />
+        <hemisphereLight args={['#ffffff', theme === 'dark' ? '#334155' : '#7c8797', theme === 'dark' ? 0.9 : 1.1]} />
         <directionalLight position={[60, 120, 40]} intensity={1.4} />
         <directionalLight position={[-40, 60, -60]} intensity={0.4} />
         <OrbitControls makeDefault enableDamping dampingFactor={0.12} maxPolarAngle={Math.PI / 2 - 0.02} />
@@ -152,8 +252,8 @@ export function Scene3D() {
           infiniteGrid
           cellSize={1}
           sectionSize={5}
-          cellColor={theme === 'dark' ? '#1e293b' : '#cbd5e1'}
-          sectionColor={theme === 'dark' ? '#334155' : '#94a3b8'}
+          cellColor={theme === 'dark' ? '#16213a' : '#cbd5e1'}
+          sectionColor={theme === 'dark' ? '#22304f' : '#94a3b8'}
           fadeDistance={250}
           cellThickness={0.6}
           sectionThickness={1}
@@ -166,16 +266,17 @@ export function Scene3D() {
             showWalls={show.walls}
           />
         ))}
-        {w.zones.map((z) => (
-          <ZoneMesh
-            key={z.id}
-            zone={z}
-            elevation={roomElev.get(z.roomId) ?? 0}
-            selected={selection?.kind === 'zone' && selection.id === z.id}
-            showVolume={show.zones && (step === 'zones' || (selection?.kind === 'zone' && selection.id === z.id))}
-          />
-        ))}
-        <RackFrames w={w} selectedRackId={selectedRackId} />
+        {show.zones &&
+          w.zones.map((z) => (
+            <ZoneMesh
+              key={z.id}
+              zone={z}
+              elevation={roomElev.get(z.roomId) ?? 0}
+              selected={selection?.kind === 'zone' && selection.id === z.id}
+              showVolume={!monitor && (step === 'zones' || (selection?.kind === 'zone' && selection.id === z.id))}
+            />
+          ))}
+        {show.racks && <RackFrames w={w} selectedRackId={selectedRackId} />}
         {show.cells && (
           <CellsLayer
             w={w}
@@ -186,6 +287,10 @@ export function Scene3D() {
             selectedRackId={step === 'racks' || step === 'cells' ? selectedRackId : undefined}
           />
         )}
+        {show.equipment && (
+          <EquipmentLayer w={w} selectedId={selection?.kind === 'equipment' ? selection.id : undefined} />
+        )}
+        <PlacementPlane />
         <LabelProjector registry={registry} />
       </Canvas>
       <LabelsLayer registry={registry} labels={labels} />

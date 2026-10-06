@@ -1,10 +1,10 @@
-import type { Connection, Rack, Room, Warehouse, Zone } from '../types';
+import type { Connection, Equipment, Rack, Room, Warehouse, Zone } from '../types';
 import { shapeTemplate } from './geometry';
 import { defaultTiers } from './rack';
+import { uid } from './id';
+import { newEquipment } from './equipment';
 
-let counter = 0;
-export const uid = (prefix = '') =>
-  `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+export { uid } from './id';
 
 export const ROOM_COLORS = ['#64748b', '#0ea5e9', '#a855f7', '#f97316', '#14b8a6', '#eab308'];
 export const ZONE_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'];
@@ -53,6 +53,7 @@ export function emptyWarehouse(name = 'Новый склад'): Warehouse {
     rooms: [],
     zones: [],
     racks: [],
+    equipment: [],
     connection: defaultConnection(),
   };
 }
@@ -82,26 +83,18 @@ export function newZone(roomId: string, index: number, points: Zone['points'], h
   };
 }
 
-/** Демонстрационный склад: Г-образный корпус + антресоль-помещение, несколько зон и рядов стеллажей. */
+/**
+ * Демонстрационный склад: Г-образный корпус с паллетным хранением, приёмкой у трёх доков,
+ * корпус мелкоштучного хранения с офисом и упаковкой. Заполнение — по внутреннему учёту.
+ */
 export function demoWarehouse(): Warehouse {
-  const w = emptyWarehouse('Демо-склад «Северный»');
+  const w = emptyWarehouse('Склад №1 — Основной');
   w.address = 'г. Москва, ул. Складская, 1';
-  w.description = 'Пример: Г-образный корпус с паллетным хранением, зона мелкоштучного хранения и приёмка.';
-  w.connection.type = 'demo';
-  w.connection.active = true;
+  w.description = 'Г-образный корпус с паллетным хранением, док-станции, корпус мелкоштучного хранения.';
+  w.connection.type = 'internal';
 
-  const main: Room = {
-    ...newRoom(0, shapeTemplate('L', 60, 44)),
-    name: 'Корпус А',
-    code: 'A',
-    height: 12,
-  };
-  const small: Room = {
-    ...newRoom(1, shapeTemplate('rect', 22, 18, 34, 26)),
-    name: 'Корпус Б (мелкоштучка)',
-    code: 'B',
-    height: 6,
-  };
+  const main: Room = { ...newRoom(0, shapeTemplate('L', 60, 44)), name: 'Корпус А', code: 'A', height: 12 };
+  const small: Room = { ...newRoom(1, shapeTemplate('rect', 22, 18, 34, 26)), name: 'Корпус Б', code: 'B', height: 6 };
   w.rooms = [main, small];
 
   const rect = (x1: number, y1: number, x2: number, y2: number) => [
@@ -110,27 +103,34 @@ export function demoWarehouse(): Warehouse {
     { x: x2, y: y2 },
     { x: x1, y: y2 },
   ];
-  const zPallet: Zone = { ...newZone(main.id, 0, rect(2, 2, 58, 17), 10.5), name: 'Паллетное хранение', code: 'PAL' };
-  const zRecv: Zone = {
-    ...newZone(main.id, 2, rect(32, 18, 58, 21), 3),
-    name: 'Приёмка / отгрузка',
-    code: 'RCV',
-    type: 'receiving',
-    color: '#f59e0b',
-  };
+  const zPallet: Zone = { ...newZone(main.id, 0, rect(2, 2, 54, 17), 10.5), name: 'Зона хранения A', code: 'PAL' };
   const zPallet2: Zone = {
     ...newZone(main.id, 1, rect(2, 19, 28, 42), 8),
-    name: 'Паллетное хранение (низкое)',
+    name: 'Зона хранения B',
     code: 'PL2',
     color: '#22c55e',
   };
+  const zRecv: Zone = {
+    ...newZone(main.id, 2, rect(55.5, 2, 59.5, 21), 3),
+    name: 'Погрузочная зона',
+    code: 'DOCK',
+    type: 'receiving',
+    color: '#f59e0b',
+  };
   const zShelf: Zone = {
-    ...newZone(small.id, 3, rect(36, 28, 54, 42), 2.6),
+    ...newZone(small.id, 3, rect(36, 32, 54, 42), 2.6),
     name: 'Мелкоштучное хранение',
     code: 'SH',
     color: '#8b5cf6',
   };
-  w.zones = [zPallet, zPallet2, zRecv, zShelf];
+  const zPack: Zone = {
+    ...newZone(small.id, 4, rect(44, 26.5, 50, 31), 2),
+    name: 'Секция сборки',
+    code: 'PACK',
+    type: 'buffer',
+    color: '#06b6d4',
+  };
+  w.zones = [zPallet, zPallet2, zRecv, zShelf, zPack];
 
   const racks: Rack[] = [];
   const letters = 'ABCDEFGHIJKLMNOP';
@@ -141,10 +141,10 @@ export function demoWarehouse(): Warehouse {
       zoneId: zPallet.id,
       code: letters[i],
       kind: 'pallet',
-      x: 30,
+      x: 28,
       y,
       rotation: 0,
-      sections: 18,
+      sections: 16,
       sectionLength: 2700,
       depth: 1100,
       groundLevel: true,
@@ -175,8 +175,8 @@ export function demoWarehouse(): Warehouse {
       overrides: {},
     });
   });
-  // Полочные стеллажи (мелкоштучное хранение)
-  [30, 30.7, 34, 34.7, 38, 38.7].forEach((y, i) => {
+  // Полочные стеллажи
+  [34, 34.7, 38.5, 39.2].forEach((y, i) => {
     racks.push({
       id: uid('k'),
       zoneId: zShelf.id,
@@ -193,9 +193,30 @@ export function demoWarehouse(): Warehouse {
       overrides: {},
     });
   });
-  // Пример заблокированных ячеек (колонна здания)
-  racks[2].overrides['9.1.2'] = { blocked: true, note: 'Колонна' };
-  racks[2].overrides['9.2.2'] = { blocked: true, note: 'Колонна' };
+  // Колонна здания в ряду C
+  racks[2].overrides['8.1.2'] = { blocked: true, note: 'Колонна' };
+  racks[2].overrides['8.2.2'] = { blocked: true, note: 'Колонна' };
   w.racks = racks;
+
+  const eq: Equipment[] = [];
+  const add = (e: Equipment, patch: Partial<Equipment> = {}) => eq.push({ ...e, ...patch });
+  // Доки на правой стене корпуса А: ворота, рампа и фура
+  [5, 10.5, 16].forEach((y, i) => {
+    add(newEquipment('gate', 60, y, 90, i + 1), { name: `Ворота ${i + 1}`, active: i < 2 });
+    add(newEquipment('dock', 61.5, y, 270, i + 1), { name: `Рампа ${i + 1}`, active: i < 2 });
+    if (i < 2) add(newEquipment('truck', 70, y, 0, i + 1), { name: `Фура ${i + 1}`, color: i ? '#e2e8f0' : '#cbd5e1' });
+  });
+  add(newEquipment('conveyor', 57.5, 11.5, 90, 1), { length: 14 });
+  add(newEquipment('forklift', 20, 5.3, 0, 1), { name: 'Погрузчик 1' });
+  add(newEquipment('forklift', 36, 11.1, 180, 2), { name: 'Погрузчик 2' });
+  add(newEquipment('forklift', 5.5, 30, 90, 3), { name: 'Погрузчик 3', color: '#facc15' });
+  add(newEquipment('forklift', 52, 19.5, 0, 4), { name: 'Погрузчик 4', active: false });
+  // Корпус Б: офис, упаковка, санузел, двери
+  add(newEquipment('office', 39.5, 28.75, 0, 1), { name: 'Офис склада', length: 7, width: 4.5 });
+  add(newEquipment('workzone', 47, 28.75, 0, 1), { name: 'Столы упаковки', length: 5, width: 3 });
+  add(newEquipment('toilet', 53, 28.25, 0, 1), { name: 'Санузел', height: 3 });
+  add(newEquipment('door', 45, 22, 0, 1), { name: 'Дверь А' });
+  add(newEquipment('door', 45, 26, 0, 2), { name: 'Дверь Б' });
+  w.equipment = eq;
   return w;
 }

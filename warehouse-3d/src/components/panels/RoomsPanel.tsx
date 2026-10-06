@@ -9,11 +9,13 @@ import {
   type ShapeTemplate,
 } from '../../lib/geometry';
 import { warehouseBounds } from '../../lib/derived';
-import { ColorField, Hint, Num, Section, Select, Text, Warn } from '../ui';
+import { ColorField, Hint, Num, Section, Text, Warn } from '../ui';
+import { EquipmentEditor, EquipmentTiles, Tile } from './EquipmentPanel';
+import { EQUIPMENT } from '../../lib/equipment';
 import { VerticesEditor } from './VerticesEditor';
 
 const SHAPES: { value: ShapeTemplate; label: string }[] = [
-  { value: 'rect', label: 'Прямоугольник' },
+  { value: 'rect', label: 'Прямоугольное' },
   { value: 'L', label: 'Г-образное' },
   { value: 'U', label: 'П-образное' },
   { value: 'T', label: 'Т-образное' },
@@ -30,6 +32,7 @@ export function RoomsPanel() {
   if (!w) return null;
 
   const room = selection?.kind === 'room' ? w.rooms.find((r) => r.id === selection.id) : undefined;
+  const selEquip = selection?.kind === 'equipment' ? w.equipment.find((e) => e.id === selection.id) : undefined;
 
   const addFromTemplate = () => {
     const b = w.rooms.length ? warehouseBounds(w) : null;
@@ -40,27 +43,42 @@ export function RoomsPanel() {
   return (
     <>
       <Section title="Форма помещений">
-        <Hint>
-          Задайте форму по шаблону с размерами или нарисуйте контур на плане по углам. Затем уточните координаты вершин
-          — перетаскиванием на плане или вводом чисел.
-        </Hint>
+        <div className="tiles">
+          {SHAPES.map((sh) => (
+            <Tile
+              key={sh.value}
+              art={`room-${sh.value}`}
+              title={sh.label}
+              active={shape === sh.value}
+              onClick={() => setShape(sh.value)}
+            />
+          ))}
+          <Tile
+            art="draw"
+            title="Нарисовать"
+            active={draw?.target === 'room' && !draw.replaceId}
+            onClick={() => st().startDraw('room')}
+            hint="Нарисовать контур помещения по углам на плане"
+          />
+        </div>
         <div className="grid3">
-          <Select label="Шаблон" value={shape} onChange={setShape} options={SHAPES} />
           <Num label="Ширина" unit="м" value={width} min={1} step={0.5} onChange={setWidth} />
           <Num label="Длина" unit="м" value={length} min={1} step={0.5} onChange={setLength} />
+          <div className="field">
+            <span className="field-label">&nbsp;</span>
+            <button className="btn primary" onClick={addFromTemplate}>
+              + Добавить
+            </button>
+          </div>
         </div>
-        <div className="row wrap">
-          <button className="btn primary" onClick={addFromTemplate}>
-            + Добавить помещение
-          </button>
-          <button
-            className={`btn ${draw?.target === 'room' && !draw.replaceId ? 'active' : ''}`}
-            onClick={() => st().startDraw('room')}
-          >
-            ✎ Нарисовать на плане
-          </button>
-        </div>
+        <Hint>Выберите форму и размеры или нарисуйте контур по углам. Вершины уточняются на плане или числами.</Hint>
       </Section>
+
+      <Section title="Элементы здания">
+        <EquipmentTiles group="building" />
+      </Section>
+
+      {selEquip && EQUIPMENT[selEquip.type].group === 'building' && <EquipmentEditor e={selEquip} />}
 
       <Section title={`Помещения (${w.rooms.length})`}>
         {!w.rooms.length && <p className="muted">Пока нет помещений.</p>}

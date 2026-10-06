@@ -2,6 +2,8 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { create } from 'zustand';
 import type { Cell } from '../../types';
+import { Icon, type IconName } from '../icons';
+import { fillColor } from '../../lib/fill';
 
 export interface Label3D {
   key: string;
@@ -11,6 +13,11 @@ export interface Label3D {
   text: string;
   cls: string;
   color?: string;
+  /** Для выносок: строки, иконка, шкала загрузки, действие по щелчку */
+  lines?: string[];
+  icon?: string;
+  progress?: number;
+  onClick?: () => void;
 }
 
 /** Общий реестр DOM-подписей: проектор внутри Canvas двигает их каждый кадр без перерисовки React. */
@@ -44,9 +51,35 @@ export function LabelProjector({ registry }: { registry: LabelRegistry }) {
     el.style.transform = `translate(${((v.x + 1) / 2) * size.width}px, ${((1 - v.y) / 2) * size.height}px) translate(-50%, -50%)`;
   };
   useFrame(() => {
+    const boxes: { x: number; y: number; w: number; h: number }[] = [];
     for (const l of registry.labels) {
       const el = registry.els.get(l.key);
-      if (el) place(el, l.x, l.y, l.z);
+      if (!el) continue;
+      if (l.cls !== 'callout') {
+        place(el, l.x, l.y, l.z);
+        continue;
+      }
+      // Выноски не должны перекрывать друг друга: сдвигаем вверх, пока есть пересечение
+      v.set(l.x, l.y, l.z).project(camera);
+      if (v.z > 1 || v.z < -1) {
+        el.style.visibility = 'hidden';
+        continue;
+      }
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      const x = ((v.x + 1) / 2) * size.width - w / 2;
+      let y = ((1 - v.y) / 2) * size.height - h;
+      const y0 = y;
+      for (let guard = 0; guard < 8; guard++) {
+        const hit = boxes.find((b) => x < b.x + b.w + 6 && x + w + 6 > b.x && y < b.y + b.h + 6 && y + h + 6 > b.y);
+        if (!hit) break;
+        y = hit.y - h - 8;
+        // Упёрлись в верх окна — ставим под мешающей выноской
+        if (y < 4) y = Math.max(y0, hit.y + hit.h + 8);
+      }
+      boxes.push({ x, y, w, h });
+      el.style.visibility = 'visible';
+      el.style.transform = `translate(${x}px, ${y}px)`;
     }
     const tip = registry.tip;
     const c = useHover.getState().cell;
@@ -68,12 +101,32 @@ export function LabelsLayer({ registry, labels }: { registry: LabelRegistry; lab
           key={l.key}
           className={`label3d ${l.cls}`}
           style={l.color ? { borderColor: l.color } : undefined}
+          onClick={l.onClick}
           ref={(el) => {
             if (el) registry.els.set(l.key, el);
             else registry.els.delete(l.key);
           }}
         >
-          {l.text}
+          {l.cls === 'callout' ? (
+            <>
+              <span className="callout-icon" style={{ color: l.color }}>
+                <Icon name={(l.icon ?? 'boxes') as IconName} size={16} />
+              </span>
+              <span className="callout-body">
+                <b>{l.text}</b>
+                {l.lines?.map((t) => (
+                  <span key={t}>{t}</span>
+                ))}
+                {l.progress !== undefined && (
+                  <span className="callout-bar">
+                    <i style={{ width: `${Math.round(l.progress * 100)}%`, background: fillColor(l.progress) }} />
+                  </span>
+                )}
+              </span>
+            </>
+          ) : (
+            l.text
+          )}
         </div>
       ))}
       <div

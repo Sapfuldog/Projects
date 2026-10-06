@@ -6,6 +6,7 @@ import { bbox, fmt } from '../../lib/geometry';
 import { uid } from '../../lib/demo';
 import { RACK_SPEC, RACK_TEMPLATES, rackCellCount, rackHeight, rackLength, rackWarnings } from '../../lib/rack';
 import { Check, Hint, Num, Section, Select, Text, Warn } from '../ui';
+import { Tile } from './EquipmentPanel';
 
 function TiersEditor({ rack, zone }: { rack: Rack; zone?: Zone }) {
   const st = useStore.getState;
@@ -238,6 +239,7 @@ export function RacksPanel() {
   const st = useStore.getState;
   const rack = w && selection?.kind === 'rack' ? w.racks.find((r) => r.id === selection.id) : undefined;
   const [zoneId, setZoneId] = useState<string>('');
+  const [showGen, setShowGen] = useState(false);
   const [gen, setGen] = useState<GenParams>({
     template: RACK_TEMPLATES[0].id,
     orientation: 0,
@@ -308,90 +310,103 @@ export function RacksPanel() {
           onChange={setZoneId}
           options={w.zones.map((z) => ({ value: z.id, label: `${z.name} (≤ ${z.height} м)` }))}
         />
-        <div className="row wrap">
+        <div className="tiles">
           {RACK_TEMPLATES.map((t) => (
-            <button key={t.id} className="btn small" onClick={() => addSingle(t.id)} title={t.title}>
-              + {t.title.split(':')[0]} {t.rack.sectionLength}
-            </button>
+            <Tile
+              key={t.id}
+              art={t.rack.kind === 'shelf' ? 'rack-shelf' : t.id === 'pallet-3' ? 'rack-pallet' : 'rack-pallet2'}
+              title={`${t.title.split(':')[0]} ${t.rack.sectionLength}`}
+              hint={t.title}
+              onClick={() => addSingle(t.id)}
+            />
           ))}
+          <Tile
+            art="rack-rows"
+            title="Ряды стеллажей"
+            hint="Генератор рядов"
+            active={showGen}
+            onClick={() => setShowGen(!showGen)}
+          />
         </div>
         <Hint>Стеллаж можно перетаскивать на плане. Размеры и ярусы настраиваются ниже после выбора стеллажа.</Hint>
       </Section>
 
-      <Section title="Генератор рядов">
-        <Select
-          label="Шаблон стеллажа"
-          value={gen.template}
-          onChange={(v) => g({ template: v })}
-          options={RACK_TEMPLATES.map((t) => ({ value: t.id, label: t.title }))}
-        />
-        <div className="grid3">
-          <Select<0 | 90>
-            label="Ряды вдоль"
-            value={gen.orientation}
-            onChange={(v) => g({ orientation: v })}
-            options={[
-              { value: 0, label: 'оси X (→)' },
-              { value: 90, label: 'оси Y (↓)' },
-            ]}
+      {showGen && (
+        <Section title="Генератор рядов">
+          <Select
+            label="Шаблон стеллажа"
+            value={gen.template}
+            onChange={(v) => g({ template: v })}
+            options={RACK_TEMPLATES.map((t) => ({ value: t.id, label: t.title }))}
           />
-          <Num label="Проход" unit="м" value={gen.aisle} min={0.5} step={0.1} onChange={(v) => g({ aisle: v })} />
-          <Num
-            label="Отступ от края"
-            unit="м"
-            value={gen.margin}
-            min={0}
-            step={0.1}
-            onChange={(v) => g({ margin: v })}
-          />
-          <Text
-            label="Код первого ряда"
-            value={gen.startCode}
-            onChange={(v) => g({ startCode: v.trim().toUpperCase() })}
-          />
-          <Num
-            label="Рядов"
-            value={gen.rows}
-            min={1}
-            max={200}
-            disabled={gen.auto}
-            onChange={(v) => g({ rows: Math.round(v) })}
-          />
-          <Num
-            label="Секций в ряду"
-            value={gen.sections}
-            min={1}
-            max={200}
-            disabled={gen.autoSections}
-            onChange={(v) => g({ sections: Math.round(v) })}
-          />
-        </div>
-        <div className="row wrap">
-          <Check label="Сколько поместится рядов" checked={gen.auto} onChange={(v) => g({ auto: v })} />
-          <Check label="Секций — по длине зоны" checked={gen.autoSections} onChange={(v) => g({ autoSections: v })} />
-          <Check label="Спина к спине" checked={gen.backToBack} onChange={(v) => g({ backToBack: v })} />
-        </div>
-        <div className="row wrap">
-          <button className="btn primary" disabled={!preview.length} onClick={() => st().addRacks(preview)}>
-            Создать {preview.length} рядов × {preview[0]?.sections ?? 0} секций
-          </button>
-          {racksInZone.length > 0 && (
-            <button
-              className="btn small danger"
-              onClick={() => {
-                if (!confirm(`Удалить все стеллажи зоны (${racksInZone.length})?`)) return;
-                st().deleteRacks(racksInZone.map((r) => r.id));
-              }}
-            >
-              Очистить зону
+          <div className="grid3">
+            <Select<0 | 90>
+              label="Ряды вдоль"
+              value={gen.orientation}
+              onChange={(v) => g({ orientation: v })}
+              options={[
+                { value: 0, label: 'оси X (→)' },
+                { value: 90, label: 'оси Y (↓)' },
+              ]}
+            />
+            <Num label="Проход" unit="м" value={gen.aisle} min={0.5} step={0.1} onChange={(v) => g({ aisle: v })} />
+            <Num
+              label="Отступ от края"
+              unit="м"
+              value={gen.margin}
+              min={0}
+              step={0.1}
+              onChange={(v) => g({ margin: v })}
+            />
+            <Text
+              label="Код первого ряда"
+              value={gen.startCode}
+              onChange={(v) => g({ startCode: v.trim().toUpperCase() })}
+            />
+            <Num
+              label="Рядов"
+              value={gen.rows}
+              min={1}
+              max={200}
+              disabled={gen.auto}
+              onChange={(v) => g({ rows: Math.round(v) })}
+            />
+            <Num
+              label="Секций в ряду"
+              value={gen.sections}
+              min={1}
+              max={200}
+              disabled={gen.autoSections}
+              onChange={(v) => g({ sections: Math.round(v) })}
+            />
+          </div>
+          <div className="row wrap">
+            <Check label="Сколько поместится рядов" checked={gen.auto} onChange={(v) => g({ auto: v })} />
+            <Check label="Секций — по длине зоны" checked={gen.autoSections} onChange={(v) => g({ autoSections: v })} />
+            <Check label="Спина к спине" checked={gen.backToBack} onChange={(v) => g({ backToBack: v })} />
+          </div>
+          <div className="row wrap">
+            <button className="btn primary" disabled={!preview.length} onClick={() => st().addRacks(preview)}>
+              Создать {preview.length} рядов × {preview[0]?.sections ?? 0} секций
             </button>
-          )}
-        </div>
-        <Hint>
-          Ряды раскладываются в габарите зоны. Для зон сложной формы проверьте результат на плане — предупреждения
-          появятся у стеллажей, вышедших за границы.
-        </Hint>
-      </Section>
+            {racksInZone.length > 0 && (
+              <button
+                className="btn small danger"
+                onClick={() => {
+                  if (!confirm(`Удалить все стеллажи зоны (${racksInZone.length})?`)) return;
+                  st().deleteRacks(racksInZone.map((r) => r.id));
+                }}
+              >
+                Очистить зону
+              </button>
+            )}
+          </div>
+          <Hint>
+            Ряды раскладываются в габарите зоны. Для зон сложной формы проверьте результат на плане — предупреждения
+            появятся у стеллажей, вышедших за границы.
+          </Hint>
+        </Section>
+      )}
 
       <Section title={`Стеллажи зоны (${racksInZone.length})`}>
         <div className="list compact">

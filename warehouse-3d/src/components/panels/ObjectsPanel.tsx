@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { useStore, useWarehouse } from '../../store';
-import { cellsOf } from '../../lib/derived';
+import { cellsOf, internalFills } from '../../lib/derived';
 import { computeStats } from '../../lib/fill';
 import { polygonArea } from '../../lib/geometry';
 import type { CellFill, Warehouse } from '../../types';
@@ -16,8 +16,11 @@ interface ExportFile {
 
 function WarehouseCard({ w, current }: { w: Warehouse; current: boolean }) {
   const st = useStore.getState;
-  const fills = useStore((s) => s.fills[w.id]);
+  const stored = useStore((s) => s.fills[w.id]);
+  const inv = useStore((s) => s.inventory[w.id]);
+  const products = useStore((s) => s.products);
   const { cells } = cellsOf(w);
+  const fills = w.connection.type === 'internal' ? internalFills(cells, inv, products) : stored;
   const stats = computeStats(cells, fills ?? {}).all;
   const area = w.rooms.reduce((s, r) => s + polygonArea(r.points), 0);
   return (
@@ -128,7 +131,7 @@ export function ObjectsPanel() {
           <Text label="Адрес" value={w.address} onChange={(v) => st().updateWarehouse({ address: v })} />
           <Text label="Описание" value={w.description} onChange={(v) => st().updateWarehouse({ description: v })} />
           <div className="row">
-            <button className="btn" onClick={() => st().setStep('rooms')}>
+            <button className="btn" onClick={() => st().setSection('warehouse', 'rooms')}>
               Далее: помещения →
             </button>
           </div>

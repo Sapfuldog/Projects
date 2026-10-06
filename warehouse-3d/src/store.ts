@@ -121,6 +121,8 @@ interface State {
   highlight: string[];
   openProductId: string | null;
   openDocId: string | null;
+  /** Открытый диалог подтверждения */
+  dialog: { text: string; action: string; danger: boolean; onYes: () => void } | null;
 }
 
 interface Actions {
@@ -185,6 +187,9 @@ interface Actions {
   dismissToast: (id: number) => void;
   markNotificationsSeen: () => void;
   setHighlight: (addresses: string[]) => void;
+  /** Подтверждение действия во внутреннем диалоге (системные confirm() во встроенных окнах не работают) */
+  ask: (text: string, onYes: () => void, action?: string, danger?: boolean) => void;
+  closeDialog: () => void;
   openProduct: (id: string | null) => void;
   openDoc: (id: string | null) => void;
   /** Показать ячейку: перейти к 3D, выделить и навести камеру */
@@ -307,6 +312,7 @@ export const useStore = create<Store>()(
         highlight: [],
         openProductId: null,
         openDocId: null,
+        dialog: null,
 
         setStep: (step) =>
           setState((s) => {
@@ -567,6 +573,9 @@ export const useStore = create<Store>()(
         dismissToast: (id) => setState((s) => void (s.toasts = s.toasts.filter((t) => t.id !== id))),
         markNotificationsSeen: () => setState((s) => void (s.notifSeenAt = Date.now())),
         setHighlight: (addresses) => setState((s) => void (s.highlight = addresses)),
+        ask: (text, onYes, action = 'Удалить', danger = true) =>
+          setState((s) => void (s.dialog = { text, onYes, action, danger })),
+        closeDialog: () => setState((s) => void (s.dialog = null)),
         openProduct: (id) => setState((s) => void (s.openProductId = id)),
         openDoc: (id) => setState((s) => void (s.openDocId = id)),
         showCell: (address) => {
@@ -734,15 +743,22 @@ export const useStore = create<Store>()(
         user: s.user,
         notifSeenAt: s.notifSeenAt,
       }),
-      onRehydrateStorage: () => () => {
-        const s = useStore.getState();
-        if (!s.warehouses.length) s.createWarehouse('demo');
-        else if (!s.warehouses.some((w) => w.id === s.currentId)) s.setCurrent(s.warehouses[0].id);
-        useStore.setState({ hydrated: true, past: [], future: [] });
-      },
+      onRehydrateStorage: () => () => finishHydration(),
     },
   ),
 );
+
+function finishHydration() {
+  const s = useStore.getState();
+  if (s.hydrated) return;
+  if (!s.warehouses.length) s.createWarehouse('demo');
+  else if (!s.warehouses.some((w) => w.id === s.currentId)) s.setCurrent(s.warehouses[0].id);
+  useStore.setState({ hydrated: true, past: [], future: [] });
+}
+
+// Если хранилище браузера недоступно или зависло (встроенные окна, приватный режим) —
+// запускаемся с демо-данными, не дожидаясь его.
+if (typeof window !== 'undefined') setTimeout(finishHydration, 4000);
 
 /** Текущий склад (или undefined). */
 export const useWarehouse = () => useStore((s) => s.warehouses.find((w) => w.id === s.currentId));

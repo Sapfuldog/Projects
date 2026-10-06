@@ -128,7 +128,10 @@ export function ZonesPanel() {
             <button
               className="btn small danger"
               onClick={() =>
-                confirm(`Удалить зону «${zone.name}» и её стеллажи?`) && (st().deleteZone(zone.id), st().select(null))
+                st().ask(
+                  `Удалить зону «${zone.name}» и её стеллажи?`,
+                  () => (st().deleteZone(zone.id), st().select(null)),
+                )
               }
             >
               Удалить

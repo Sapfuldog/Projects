@@ -55,7 +55,9 @@ function WarehouseCard({ w, current }: { w: Warehouse; current: boolean }) {
         <button
           className="btn small danger"
           onClick={() =>
-            confirm(`Удалить объект «${w.name}» со всеми помещениями и стеллажами?`) && st().deleteWarehouse(w.id)
+            st().ask(`Удалить объект «${w.name}» со всеми помещениями, стеллажами и остатками?`, () =>
+              st().deleteWarehouse(w.id),
+            )
           }
         >
           Удалить
@@ -93,9 +95,9 @@ export function ObjectsPanel() {
       if (!list.every((x) => x && Array.isArray(x.rooms) && Array.isArray(x.racks)))
         throw new Error('Неизвестный формат файла');
       st().importWarehouses(list, 'fills' in data ? data.fills : undefined);
-      alert(`Загружено объектов: ${list.length}`);
+      st().toast(`Загружено объектов: ${list.length}`);
     } catch (e) {
-      alert(`Не удалось загрузить: ${e instanceof Error ? e.message : e}`);
+      st().toast(`Не удалось загрузить: ${e instanceof Error ? e.message : e}`, 'error');
     }
   };
 

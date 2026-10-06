@@ -69,14 +69,20 @@ export function LabelProjector({ registry }: { registry: LabelRegistry }) {
       const h = el.offsetHeight;
       const x = ((v.x + 1) / 2) * size.width - w / 2;
       let y = ((1 - v.y) / 2) * size.height - h;
+      // Ищем ближайшее свободное место выше или ниже; если его нет — прячем выноску
       const y0 = y;
-      for (let guard = 0; guard < 8; guard++) {
-        const hit = boxes.find((b) => x < b.x + b.w + 6 && x + w + 6 > b.x && y < b.y + b.h + 6 && y + h + 6 > b.y);
-        if (!hit) break;
-        y = hit.y - h - 8;
-        // Упёрлись в верх окна — ставим под мешающей выноской
-        if (y < 4) y = Math.max(y0, hit.y + hit.h + 8);
+      const free = (yy: number) =>
+        yy >= 4 &&
+        yy + h <= size.height - 64 &&
+        !boxes.some((b) => x < b.x + b.w + 6 && x + w + 6 > b.x && yy < b.y + b.h + 6 && yy + h + 6 > b.y);
+      const candidates = [y0];
+      for (let k = 1; k <= 6; k++) candidates.push(y0 - k * (h / 2 + 6), y0 + k * (h / 2 + 6));
+      const found = candidates.find(free);
+      if (found === undefined) {
+        el.style.visibility = 'hidden';
+        continue;
       }
+      y = found;
       boxes.push({ x, y, w, h });
       el.style.visibility = 'visible';
       el.style.transform = `translate(${x}px, ${y}px)`;

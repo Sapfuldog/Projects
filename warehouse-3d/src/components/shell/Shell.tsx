@@ -362,3 +362,32 @@ export function Toasts() {
     </div>
   );
 }
+
+/** Диалог подтверждения действия. */
+export function ConfirmDialog() {
+  const dialog = useStore((s) => s.dialog);
+  const st = useStore.getState;
+  if (!dialog) return null;
+  return (
+    <div className="modal-back" onClick={() => st().closeDialog()}>
+      <div className="modal card" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <p>{dialog.text}</p>
+        <div className="row">
+          <button
+            className={`btn ${dialog.danger ? 'danger' : 'primary'}`}
+            autoFocus
+            onClick={() => {
+              dialog.onYes();
+              st().closeDialog();
+            }}
+          >
+            {dialog.action}
+          </button>
+          <button className="btn" onClick={() => st().closeDialog()}>
+            Отмена
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

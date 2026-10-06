@@ -223,12 +223,16 @@ function DocDetail({ d }: { d: Doc }) {
             className="btn primary"
             disabled={!plan.ops.length}
             onClick={() => {
-              if (short.length && !confirm('Часть позиций проведётся не полностью. Продолжить?')) return;
-              st().completeDoc(d.id, plan.ops);
-              st().setHighlight([]);
-              st().toast(
-                `${d.kind === 'receipt' ? `Поставка ${d.number} проведена` : `Заказ ${d.number} собран и отгружен`}: ${plan.ops.length} опер.`,
-              );
+              const run = () => {
+                st().completeDoc(d.id, plan.ops);
+                st().setHighlight([]);
+                st().toast(
+                  `${d.kind === 'receipt' ? `Поставка ${d.number} проведена` : `Заказ ${d.number} собран и отгружен`}: ${plan.ops.length} опер.`,
+                );
+              };
+              if (short.length)
+                st().ask('Часть позиций проведётся не полностью. Провести то, что есть?', run, 'Провести', false);
+              else run();
             }}
           >
             <Icon name="check" size={16} /> {verb} и провести

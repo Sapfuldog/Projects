@@ -167,9 +167,10 @@ function ProductDrawer({ p }: { p: Product }) {
         disabled={qty > 0}
         title={qty > 0 ? 'Нельзя удалить товар с остатком' : ''}
         onClick={() => {
-          if (!confirm(`Удалить товар «${p.name}» из каталога?`)) return;
-          st().deleteProduct(p.id);
-          st().openProduct(null);
+          st().ask(`Удалить товар «${p.name}» из каталога?`, () => {
+            st().deleteProduct(p.id);
+            st().openProduct(null);
+          });
         }}
       >
         Удалить товар

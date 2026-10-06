@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useStore } from './store';
 import type { Section } from './types';
 import { useConnectorRunner } from './lib/connectors';
-import { MobileTabs, NavRail, Toasts, TopBar } from './components/shell/Shell';
+import { ConfirmDialog, MobileTabs, NavRail, Toasts, TopBar } from './components/shell/Shell';
 import { HomePage } from './pages/HomePage';
 import { WarehousePage } from './pages/WarehousePage';
 import { StockPage } from './pages/StockPage';
@@ -94,6 +94,7 @@ export function App() {
       </main>
       <MobileTabs />
       <Toasts />
+      <ConfirmDialog />
     </div>
   );
 }

@@ -393,8 +393,9 @@ export function RacksPanel() {
               <button
                 className="btn small danger"
                 onClick={() => {
-                  if (!confirm(`Удалить все стеллажи зоны (${racksInZone.length})?`)) return;
-                  st().deleteRacks(racksInZone.map((r) => r.id));
+                  st().ask(`Удалить все стеллажи зоны (${racksInZone.length})?`, () =>
+                    st().deleteRacks(racksInZone.map((r) => r.id)),
+                  );
                 }}
               >
                 Очистить зону

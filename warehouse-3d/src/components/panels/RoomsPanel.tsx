@@ -108,8 +108,10 @@ export function RoomsPanel() {
             <button
               className="btn small danger"
               onClick={() =>
-                confirm(`Удалить «${room.name}» вместе с его зонами и стеллажами?`) &&
-                (st().deleteRoom(room.id), st().select(null))
+                st().ask(`Удалить «${room.name}» вместе с его зонами и стеллажами?`, () => {
+                  st().deleteRoom(room.id);
+                  st().select(null);
+                })
               }
             >
               Удалить

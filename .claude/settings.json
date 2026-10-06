@@ -1,7 +1,8 @@
 {
   "enabledPlugins": {
     "ponytail@ponytail": true,
-    "agent-skills@addy-agent-skills": true
+    "agent-skills@addy-agent-skills": true,
+    "ecc@ecc": true
   },
   "extraKnownMarketplaces": {
     "ponytail": {
@@ -14,6 +15,12 @@
       "source": {
         "source": "github",
         "repo": "addyosmani/agent-skills"
+      }
+    },
+    "ecc": {
+      "source": {
+        "source": "github",
+        "repo": "affaan-m/everything-claude-code"
       }
     }
   }

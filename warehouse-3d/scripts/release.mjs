@@ -58,6 +58,27 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \\
 CMD ["node", "server/server.mjs"]
 `,
 );
+// Памятка для Windows: Блокнот, CRLF, UTF-8 с BOM
+const START = `Склад 3D — готовый пакет (версия ${pkg.version})
+
+1. Установите Node.js LTS: https://nodejs.org (или из пакета программ компании).
+
+2. Запуск на этом компьютере: дважды щёлкните deploy\\windows\\start.cmd
+   и откройте в браузере http://localhost:8080. Окно не закрывайте — это сервер.
+
+3. Чтобы сервер запускался сам и коллеги открывали его по сети:
+   PowerShell от имени администратора, в этой папке:
+     powershell -ExecutionPolicy Bypass -File .\\deploy\\windows\\install.ps1
+   Коллеги открывают http://<адрес этого компьютера>:8080
+
+Если Windows не даёт запустить файл из скачанного архива: «Свойства» архива →
+«Разблокировать», затем распакуйте заново.
+
+Linux: sudo ./deploy/linux/install.sh      Docker: docker compose up -d --build
+Подробно — DEPLOY.md.
+`;
+fs.writeFileSync(path.join(out, 'Как запустить.txt'), `\ufeff${START.replace(/\n/g, '\r\n')}`);
+
 const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8').replace(/^\s*NPM_REGISTRY:.*\n/m, '');
 fs.writeFileSync(path.join(out, 'docker-compose.yml'), compose);
 

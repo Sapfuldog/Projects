@@ -8,6 +8,7 @@ import { applyRows, fetchRows, pushStructure } from '../../lib/connectors';
 import { timeAgo } from '../../lib/analytics';
 import { Check, Hint, Num, Section, Text, download } from '../ui';
 import { Icon } from '../icons';
+import { useServer } from '../../lib/shared';
 
 const TYPES: { value: ConnectionType; title: string; hint: string }[] = [
   { value: 'none', title: 'Нет', hint: 'Данные не обновляются' },
@@ -28,6 +29,7 @@ export function ConnectPanel() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<Record<string, unknown>[] | null>(null);
+  const serverMode = useServer((s) => s.mode === 'server');
   if (!w) return null;
   const c = w.connection;
   const up = st().updateConnection;
@@ -125,9 +127,21 @@ export function ConnectPanel() {
               label={c.type === 'rest' ? 'Адрес API (GET)' : 'Адрес WebSocket'}
               value={c.url}
               mono
-              placeholder={c.type === 'rest' ? 'https://erp.zavod.local/api/stock' : 'wss://wms.zavod.local/stock'}
+              placeholder={
+                c.type === 'rest'
+                  ? serverMode
+                    ? 'erp/items'
+                    : 'https://erp.zavod.local/api/stock'
+                  : 'wss://wms.zavod.local/stock'
+              }
               onChange={(v) => up({ url: v })}
             />
+            {c.type === 'rest' && serverMode && (
+              <Hint>
+                Через сервер компании: адрес <code>erp/…</code> — запрос уйдёт на учётную систему из настроек сервера
+                (ERP_URL) без ошибок CORS, логин и пароль хранятся на сервере.
+              </Hint>
+            )}
             <div className="grid2">
               <Text
                 label="Путь к массиву в ответе"

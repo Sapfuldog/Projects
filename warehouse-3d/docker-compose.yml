@@ -1,0 +1,28 @@
+# «Склад 3D» на сервере компании:
+#   cp sklad-3d.env.example .env   # при необходимости поправить порт, пароль, учётную систему
+#   docker compose up -d --build
+# Приложение: http://<адрес-сервера>:8080 — порт открыт на всех интерфейсах (0.0.0.0).
+services:
+  sklad-3d:
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    image: sklad-3d:latest
+    container_name: sklad-3d
+    restart: unless-stopped
+    ports:
+      - '0.0.0.0:${PORT:-8080}:8080'
+    environment:
+      EDIT_PASSWORD: ${EDIT_PASSWORD:-}
+      ERP_URL: ${ERP_URL:-}
+      ERP_USER: ${ERP_USER:-}
+      ERP_PASSWORD: ${ERP_PASSWORD:-}
+      ERP_HEADERS: ${ERP_HEADERS:-}
+      ERP_CACHE_SEC: ${ERP_CACHE_SEC:-5}
+    volumes:
+      - sklad-data:/data
+
+volumes:
+  sklad-data:

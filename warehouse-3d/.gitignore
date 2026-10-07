@@ -3,3 +3,9 @@ dist
 dist-single
 *.log
 shots*/
+
+# Данные и настройки сервера компании
+/data/
+/release/
+/sklad-3d.env
+/.env

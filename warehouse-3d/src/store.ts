@@ -52,6 +52,7 @@ import { DEMO_CONSUMERS, DEMO_PRODUCTS } from './lib/catalog';
 import { demoSnapshot, demoTick } from './lib/demoData';
 import { historyPoint, locationStats, pushHistory } from './lib/analytics';
 import type { ImportResult } from './lib/snapshot';
+import { loadWithServer, startSync } from './lib/shared';
 
 export type ViewMode = '3d' | 'plan' | 'split';
 /** Стены в 3D: срез (видно внутренности), полная высота, скрыть. */
@@ -286,21 +287,27 @@ interface Actions {
 
 export type Store = State & Actions;
 
+/** Версия формата сохранённых данных */
+const PERSIST_VERSION = 3;
+
 // IndexedDB вместо localStorage: срезы остатков тысяч ячеек не влезают в 5 МБ.
+async function readLocal(name: string): Promise<string | null> {
+  try {
+    return (await get<string>(name)) ?? null;
+  } catch {
+    try {
+      return localStorage.getItem(name);
+    } catch {
+      return null;
+    }
+  }
+}
+
 // Запись откладывается, чтобы частые обновления не нагружали браузер.
+// При запуске с сервера компании общая модель складов берётся с сервера (lib/shared.ts).
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
 const idbStorage: StateStorage = {
-  getItem: async (name) => {
-    try {
-      return (await get<string>(name)) ?? null;
-    } catch {
-      try {
-        return localStorage.getItem(name);
-      } catch {
-        return null;
-      }
-    }
-  },
+  getItem: (name) => loadWithServer(readLocal(name), PERSIST_VERSION),
   setItem: (name, value) => {
     clearTimeout(pending.get(name));
     pending.set(
@@ -1023,7 +1030,7 @@ export const useStore = create<Store>()(
     }),
     {
       name: 'warehouse-3d',
-      version: 3,
+      version: PERSIST_VERSION,
       migrate: (persisted, version) => {
         const p = (persisted ?? {}) as Partial<State>;
         if (version < 3) {
@@ -1058,7 +1065,10 @@ export const useStore = create<Store>()(
         const p = (persisted ?? {}) as Partial<State>;
         return { ...current, ...p, show: { ...DEFAULT_SHOW, ...(p.show ?? {}) } };
       },
-      onRehydrateStorage: () => () => finishHydration(),
+      onRehydrateStorage: () => () => {
+        finishHydration();
+        startSharedSync();
+      },
     },
   ),
 );
@@ -1072,7 +1082,40 @@ function finishHydration() {
     useStore.getState().createWarehouse('demo-it');
     useStore.getState().setCurrent(id);
   } else if (!s.warehouses.some((w) => w.id === s.currentId)) s.setCurrent(s.warehouses[0].id);
+  ensureDemoInventory();
   useStore.setState({ hydrated: true, past: [], future: [] });
+}
+
+/** Склад на демо-потоке без среза (например, общая модель с сервера у нового пользователя) — построить демо-срез. */
+function ensureDemoInventory() {
+  const s = useStore.getState();
+  for (const w of s.warehouses) if (w.connection?.type === 'demo' && !s.inventory[w.id]) s.resetDemoData(w.id);
+}
+
+/** Обмен общей моделью с сервером компании: структура складов, тара, кладовые. */
+function startSharedSync() {
+  startSync({
+    read: () => {
+      const s = useStore.getState();
+      return { warehouses: s.warehouses, tareTypes: s.tareTypes, consumers: s.consumers };
+    },
+    apply: (m) => {
+      useStore.setState((s) => {
+        if (Array.isArray(m.warehouses)) s.warehouses = m.warehouses as Warehouse[];
+        if (Array.isArray(m.tareTypes)) s.tareTypes = m.tareTypes as TareType[];
+        if (Array.isArray(m.consumers)) s.consumers = m.consumers as Consumer[];
+        s.past = [];
+        s.future = [];
+        if (!s.warehouses.some((w) => w.id === s.currentId)) s.currentId = s.warehouses[0]?.id ?? null;
+      });
+      ensureDemoInventory();
+    },
+    subscribe: (fn) =>
+      useStore.subscribe((s, prev) => {
+        if (s.warehouses !== prev.warehouses || s.tareTypes !== prev.tareTypes || s.consumers !== prev.consumers) fn();
+      }),
+    notify: (text, kind) => useStore.getState().toast(text, kind),
+  });
 }
 
 // Если хранилище браузера недоступно или зависло (встроенные окна, приватный режим) —

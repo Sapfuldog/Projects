@@ -4,14 +4,20 @@
   "version": "0.1.0",
   "type": "module",
   "description": "3D-карта складов: помещения, зоны размещения, стеллажи, ярусы, ячейки и их заполнение",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "build:single": "vite build --mode single",
     "preview": "vite preview",
+    "start": "node server/server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "mock-wms": "node scripts/mock-wms.mjs"
+    "mock-wms": "node scripts/mock-wms.mjs",
+    "release": "npm run build && node scripts/release.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",

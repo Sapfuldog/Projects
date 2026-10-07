@@ -11,6 +11,7 @@ import { CellsPanel } from '../components/panels/CellsPanel';
 import { EquipmentPanel } from '../components/panels/EquipmentPanel';
 import { PlacesPanel } from '../components/panels/PlacesPanel';
 import { useCells } from '../lib/derived';
+import { useServer } from '../lib/shared';
 
 const TABS: { id: Step; title: string; icon: IconName }[] = [
   { id: 'rooms', title: 'Здания', icon: 'building' },
@@ -52,6 +53,8 @@ export function WarehousePage() {
   const future = useStore((s) => s.future.length);
   const st = useStore.getState;
   const virtual = w?.kind === 'virtual';
+  const server = useServer((s) => s.mode);
+  const readOnly = useServer((s) => s.mode === 'server' && !s.canEdit);
   const tabs = virtual ? [{ id: 'places' as Step, title: 'Места учёта', icon: 'virtual' as IconName }] : TABS;
   const tab = tabs.some((t) => t.id === step) ? step : tabs[0].id;
 
@@ -69,6 +72,11 @@ export function WarehousePage() {
           <div>
             <h2>Конструктор</h2>
             <div className="muted small">{w?.name}</div>
+            {readOnly && (
+              <button className="badge warn readonly" onClick={() => st().setSection('settings')}>
+                Только просмотр: изменения не сохраняются на сервере. Пароль редактора — Настройки → Объекты
+              </button>
+            )}
           </div>
           <div className="seg small">
             <button disabled={!past} onClick={() => st().undo()} title="Отменить (Ctrl+Z)">
@@ -96,7 +104,13 @@ export function WarehousePage() {
               ? `${w?.places.length ?? 0} мест учёта`
               : `${w?.floors.length ?? 0} эт. · ${w?.rooms.length ?? 0} помещ. · ${w?.zones.length ?? 0} зон · ${w?.racks.length ?? 0} стелл. · ${w?.mezzanines.length ?? 0} мезон. · ${cells.length.toLocaleString('ru-RU')} яч.`}
           </span>
-          <span className="muted small">Изменения сохраняются в браузере автоматически.</span>
+          <span className="muted small">
+            {server === 'local'
+              ? 'Изменения сохраняются в браузере автоматически.'
+              : readOnly
+                ? 'Только просмотр: изменения не сохраняются.'
+                : 'Изменения сохраняются на сервере автоматически и видны всем.'}
+          </span>
         </div>
       </aside>
     </div>

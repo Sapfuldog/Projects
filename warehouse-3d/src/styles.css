@@ -4635,3 +4635,32 @@ input[type='number']::-webkit-inner-spin-button {
     white-space: nowrap;
   }
 }
+
+/* ----- Сервер компании ----- */
+.srv {
+  font-weight: 700;
+}
+.srv-saved {
+  color: var(--ok);
+}
+.srv-saving {
+  color: var(--accent-text);
+}
+.srv-offline,
+.srv-password {
+  color: var(--warn-text);
+}
+.server-pw {
+  align-items: flex-end;
+}
+.server-pw .field {
+  min-width: 200px;
+}
+.badge.readonly {
+  display: block;
+  margin-top: 6px;
+  border: 0;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}

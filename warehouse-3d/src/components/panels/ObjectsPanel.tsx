@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useStore, useWarehouse } from '../../store';
 import { monitorOf } from '../../lib/monitor';
 import { polygonArea } from '../../lib/geometry';
@@ -6,6 +6,7 @@ import type { Inventory, Warehouse } from '../../types';
 import { Hint, Section, Select, Text, download, pct } from '../ui';
 import { Meter } from '../CellCard';
 import { Icon } from '../icons';
+import { getEditPassword, setEditPassword, useServer, type ServerState } from '../../lib/shared';
 
 interface ExportFile {
   format: 'warehouse-3d';
@@ -71,12 +72,88 @@ function WarehouseCard({ w, current }: { w: Warehouse; current: boolean }) {
   );
 }
 
+const SERVER_STATE: Record<ServerState, string> = {
+  local: 'Только этот браузер',
+  saved: 'Сохранено на сервере',
+  saving: 'Сохранение…',
+  offline: 'Нет связи с сервером',
+  password: 'Нужен пароль редактора',
+};
+
+/** Где хранятся данные: сервер компании (общие для всех) или этот браузер. */
+function ServerSection() {
+  const sv = useServer();
+  const [pw, setPw] = useState(getEditPassword);
+  const st = useStore.getState;
+  if (sv.mode === 'local')
+    return (
+      <Section title="Где хранятся данные">
+        <Hint>
+          Склады, срезы и настройки хранятся в этом браузере. Чтобы все сотрудники видели одни и те же склады, запустите
+          приложение на сервере компании — инструкция в файле DEPLOY.md. Перенести склады на другой компьютер можно
+          файлом: «Выгрузить» здесь, «Загрузить» там.
+        </Hint>
+      </Section>
+    );
+  return (
+    <Section title="Сервер компании">
+      <div className="metrics">
+        <span>
+          Состояние: <b className={`srv srv-${sv.state}`}>{SERVER_STATE[sv.state]}</b>
+        </span>
+        <span>
+          Версия: <b>{sv.version}</b>
+        </span>
+        {sv.savedAt && (
+          <span>
+            Изменено: <b>{new Date(sv.savedAt).toLocaleString('ru-RU')}</b>
+          </span>
+        )}
+      </div>
+      <Hint>
+        Структура складов, подключение к учётной системе, виды тары и кладовые общие для всех, кто открывает приложение
+        с этого сервера; чужие изменения подтягиваются сами. Срезы остатков и настройки вида у каждого свои.
+      </Hint>
+      {sv.protected && (
+        <form
+          className="row wrap server-pw"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const ok = await setEditPassword(pw);
+            st().toast(
+              ok ? 'Пароль принят: изменения сохраняются на сервере' : 'Неверный пароль редактора',
+              ok ? 'ok' : 'error',
+            );
+          }}
+        >
+          <label className="field grow">
+            <span className="field-label">
+              Пароль редактора · {sv.canEdit ? 'принят' : 'без него — только просмотр'}
+            </span>
+            <input
+              id="edit-password"
+              type="password"
+              autoComplete="current-password"
+              value={pw}
+              onChange={(e) => setPw(e.target.value)}
+            />
+          </label>
+          <button className="btn small primary" type="submit">
+            Применить
+          </button>
+        </form>
+      )}
+    </Section>
+  );
+}
+
 export function ObjectsPanel() {
   const warehouses = useStore((s) => s.warehouses);
   const currentId = useStore((s) => s.currentId);
   const w = useWarehouse();
   const st = useStore.getState;
   const fileRef = useRef<HTMLInputElement>(null);
+  const serverMode = useServer((s) => s.mode === 'server');
 
   const exportAll = (only?: Warehouse) => {
     const s = st();
@@ -168,9 +245,14 @@ export function ObjectsPanel() {
         </Section>
       )}
 
+      <ServerSection />
+
       <Section title="Резервная копия">
         <Hint>
-          Структура и срезы хранятся в браузере. Для переноса на другой компьютер выгрузите файл и загрузите его там.
+          Файл выгрузки — копия складов со срезами на вашем компьютере.
+          {serverMode
+            ? ' Загруженный из файла склад попадёт на сервер и станет общим.'
+            : ' Для переноса на другой компьютер выгрузите файл и загрузите его там.'}
         </Hint>
         <div className="row wrap">
           {w && (

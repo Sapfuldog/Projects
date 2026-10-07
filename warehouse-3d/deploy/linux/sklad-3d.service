@@ -1,0 +1,26 @@
+# Служба systemd «Склад 3D». Устанавливается скриптом deploy/linux/install.sh.
+# Настройки — /etc/sklad-3d.env (порт, пароль редактора, учётная система).
+[Unit]
+Description=Склад 3D — визуализация складов для сети компании
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sklad3d
+Group=sklad3d
+WorkingDirectory=/opt/sklad-3d
+Environment=HOST=0.0.0.0 PORT=8080 DATA_DIR=/var/lib/sklad-3d
+EnvironmentFile=-/etc/sklad-3d.env
+ExecStart=/usr/bin/node /opt/sklad-3d/server/server.mjs
+Restart=always
+RestartSec=3
+StateDirectory=sklad-3d
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/sklad-3d
+
+[Install]
+WantedBy=multi-user.target

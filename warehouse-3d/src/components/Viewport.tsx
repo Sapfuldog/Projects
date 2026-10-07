@@ -7,6 +7,7 @@ import { VirtualBoard } from './VirtualBoard';
 import { Icon, type IconName } from './icons';
 import { EQUIPMENT } from '../lib/equipment';
 import { useMonitor, useProducts } from '../lib/derived';
+import { searchCells } from '../lib/search';
 import { CELL_TYPES, GROUPS } from '../lib/materials';
 import { LEVEL_COLOR } from '../lib/colors';
 import type { CellType, ColorMode, MaterialGroup } from '../types';
@@ -392,12 +393,36 @@ function ViewToolbar({ mode }: { mode: SceneMode }) {
   );
 }
 
+/** Итог поиска по номенклатуре на карте: сколько ячеек подсвечено, переход к списку. */
+function SearchHint() {
+  const search = useStore((s) => s.search);
+  const m = useMonitor();
+  const st = useStore.getState;
+  const q = search.trim();
+  if (!m || q.length < 2) return null;
+  const n = searchCells(m, q).size;
+  return (
+    <div className="place-hint info">
+      <Icon name="search" size={15} />«{q}»: {n ? `найдено ячеек ${n.toLocaleString('ru-RU')}` : 'ничего не найдено'}
+      {n > 0 && (
+        <button className="btn small" onClick={() => st().setSection('cells')}>
+          Списком
+        </button>
+      )}
+      <button className="btn small" onClick={() => st().setSearch('')}>
+        Сбросить
+      </button>
+    </div>
+  );
+}
+
 /** Окно склада: 3D и/или план, панель вида, этажи, легенда, карточка выбранного объекта. */
 export function Viewport({ mode = 'monitor' }: { mode?: SceneMode }) {
   const w = useWarehouse();
   const view = useStore((s) => s.view);
   const placing = useStore((s) => s.placing);
   const highlight = useStore((s) => s.highlight);
+  const searching = useStore((s) => s.search.trim().length >= 2);
   const selected = useStore((s) => !!s.selection);
   if (w?.kind === 'virtual') {
     return (
@@ -432,7 +457,8 @@ export function Viewport({ mode = 'monitor' }: { mode?: SceneMode }) {
           </button>
         </div>
       )}
-      {highlight.length > 0 && !placing && (
+      {searching && !placing && <SearchHint />}
+      {highlight.length > 0 && !placing && !searching && (
         <div className="place-hint info">
           Подсвечено мест: {highlight.length}
           <button className="btn small" onClick={() => useStore.getState().setHighlight([])}>

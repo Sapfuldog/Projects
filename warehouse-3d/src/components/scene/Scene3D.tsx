@@ -13,6 +13,7 @@ import { splitKey } from '../../lib/inventory';
 import { VIOLATIONS } from '../../lib/control';
 import { timeAgo } from '../../lib/analytics';
 import { partyLabel, type Monitor } from '../../lib/monitor';
+import { searchCells } from '../../lib/search';
 import type { Cell, Product, Warehouse } from '../../types';
 import { sceneInfo, type SceneInfo } from './common';
 import { Ground, RoomsLayer, ZoneLimit, ZonesLayer } from './Structure';
@@ -513,20 +514,11 @@ export function Scene3D({ mode = 'monitor' }: { mode?: SceneMode }) {
 
   const highlight = useMemo(() => {
     const set = new Set(highlightList);
-    const q = search.trim().toUpperCase();
-    if (m && (productFilter || q.length >= 2)) {
-      for (const [addr, u] of m.usage) {
-        if (productFilter && u.byProduct[productFilter]) set.add(addr);
-        if (
-          q.length >= 2 &&
-          (addr.toUpperCase().includes(q) ||
-            Object.keys(u.byProduct).some((pid) => products.get(pid)?.sku.toUpperCase().includes(q)))
-        )
-          set.add(addr);
-      }
-    }
+    if (m && productFilter) for (const [addr, u] of m.usage) if (u.byProduct[productFilter]) set.add(addr);
+    // Поиск по номенклатуре: адрес, наименование, артикул, партия, плавка
+    if (m && search.trim().length >= 2) for (const addr of searchCells(m, search)) set.add(addr);
     return set;
-  }, [highlightList, search, productFilter, m, products]);
+  }, [highlightList, search, productFilter, m]);
 
   const cargoCtx = useMemo<CargoCtx | null>(
     () => (m ? { mode: colorMode, products, tareTypes, worst: m.worst, lastMove: m.lastMove, now: Date.now() } : null),

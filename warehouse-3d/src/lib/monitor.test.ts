@@ -4,12 +4,22 @@ import { demoIT, demoShipyard, emptyWarehouse, newZone, newRoom } from './demo';
 import { DEMO_CONSUMERS, DEMO_PRODUCTS } from './catalog';
 import { DEFAULT_TARE } from './materials';
 import { buildCells, defaultPlaces, rackCells, rackContext, rackHeight, rackWarnings, tierBases } from './rack';
-import { cellFill, cellUsage, emptyInventory, rackLoads, tareBalances, unitsFit } from './inventory';
+import {
+  batchStock,
+  cellFill,
+  cellUsage,
+  emptyInventory,
+  rackLoads,
+  stockLines,
+  tareBalances,
+  unitsFit,
+} from './inventory';
 import { checkPlacement } from './control';
 import { demoSnapshot, demoTick } from './demoData';
 import { cellsOf, monitorOf, productsMap, tareMap } from './monitor';
 import { importSnapshot, parseCSV, parseDate, toCSV } from './snapshot';
 import { locationStats } from './analytics';
+import { fold, searchCells } from './search';
 import { shapeTemplate } from './geometry';
 
 const ctx = { products: productsMap(DEMO_PRODUCTS), tareTypes: tareMap(DEFAULT_TARE), consumers: DEMO_CONSUMERS };
@@ -340,5 +350,56 @@ describe('виртуальный склад', () => {
     const nb = Object.entries(inv.stock['IT-СКЛ']).filter(([k]) => k.startsWith('p-nb~'));
     expect(nb.length).toBe(9);
     expect(nb.every(([, q]) => q === 1)).toBe(true);
+  });
+});
+
+describe('номенклатура в ячейках и поиск', () => {
+  const { w } = smallWarehouse({});
+  const { cells } = cellsOf(w);
+  const r = importSnapshot(
+    [
+      { address: 'A-01-01-01', sku: 'ТР-57×4', qty: 1.25, batch: 'П-1', heat: '2Т-11' },
+      { address: 'A-01-01-01', sku: 'ФЛ-АН348', qty: 300 },
+      { address: 'A-01-01-02', sku: 'ТР-57×4', qty: 0.5, batch: 'П-1', heat: '2Т-11' },
+      { address: 'A-02-01-01', tare: 'EUR', tareCount: 12 },
+    ],
+    demoShipyard().connection.mapping,
+    cells,
+    DEMO_PRODUCTS,
+    DEFAULT_TARE,
+    undefined,
+    { replace: true },
+  );
+  const m = monitorOf(w, r.inventory, DEMO_PRODUCTS, DEFAULT_TARE);
+  const addresses = cells.map((c) => c.address);
+
+  it('строки по ячейкам: товары по партиям, пустая тара, пустые ячейки по запросу', () => {
+    const busy = stockLines(addresses, m.usage);
+    expect(busy.map((l) => l.address)).toEqual(['A-01-01-01', 'A-01-01-01', 'A-01-01-02', 'A-02-01-01']);
+    expect(busy[3]).toEqual({ address: 'A-02-01-01', tareTypeId: 't-eur', qty: 12 });
+    expect(stockLines(addresses, m.usage, 'add')).toHaveLength(busy.length + cells.length - 3);
+    const free = stockLines(addresses, m.usage, 'only');
+    expect(free).toHaveLength(cells.length - 3);
+    expect(free.every((l) => !l.productId && !l.tareTypeId)).toBe(true);
+  });
+
+  it('поиск: наименование, артикул и плавка латиницей, адрес, тара', () => {
+    expect([...searchCells(m, 'труба')].sort()).toEqual(['A-01-01-01', 'A-01-01-02']);
+    expect([...searchCells(m, 'TP-57')].sort()).toEqual(['A-01-01-01', 'A-01-01-02']);
+    expect([...searchCells(m, '2t-11')].sort()).toEqual(['A-01-01-01', 'A-01-01-02']);
+    expect([...searchCells(m, 'ан348')]).toEqual(['A-01-01-01']);
+    expect([...searchCells(m, 'eur')]).toEqual(['A-02-01-01']);
+    expect(searchCells(m, 'a-02-01-0').size).toBe(3);
+    expect(searchCells(m, 'нет такого').size).toBe(0);
+    expect(fold('A1-01 TP')).toBe(fold('А1-01 ТР'));
+  });
+
+  it('партия: количество по каждой ячейке', () => {
+    const [b] = batchStock(r.inventory, P('p-pipe57').id);
+    expect(b.cells).toEqual([
+      { address: 'A-01-01-01', qty: 1.25 },
+      { address: 'A-01-01-02', qty: 0.5 },
+    ]);
+    expect(b.qty).toBe(1.75);
   });
 });

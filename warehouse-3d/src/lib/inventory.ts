@@ -302,7 +302,8 @@ export interface BatchStock {
   batch?: Batch;
   batchId?: string;
   qty: number;
-  cells: string[];
+  /** Ячейки партии с количеством в каждой */
+  cells: { address: string; qty: number }[];
 }
 
 /** Остатки товара по партиям. */
@@ -315,7 +316,7 @@ export function batchStock(inv: Inventory | undefined, productId: string): Batch
       const key = bid ?? '';
       const e = m.get(key) ?? { batch: bid ? inv?.batches[bid] : undefined, batchId: bid, qty: 0, cells: [] };
       e.qty += q;
-      e.cells.push(address);
+      e.cells.push({ address, qty: q });
       m.set(key, e);
     }
   }
@@ -324,6 +325,40 @@ export function batchStock(inv: Inventory | undefined, productId: string): Batch
       (a.batch?.expiry ?? Infinity) - (b.batch?.expiry ?? Infinity) ||
       (a.batch?.receivedAt ?? 0) - (b.batch?.receivedAt ?? 0),
   );
+}
+
+/** Строка содержимого ячейки: ТМЦ (партия) или пустая тара; без товара и тары — ячейка без состава. */
+export interface StockLine {
+  address: string;
+  productId?: string;
+  batchId?: string;
+  tareTypeId?: string;
+  qty: number;
+}
+
+/**
+ * Номенклатура в ячейках построчно, в порядке адресов: по каждой ячейке ТМЦ по партиям, затем пустая тара.
+ * `empty`: 'skip' — только ячейки с содержимым, 'add' — и пустые (строкой без товара), 'only' — только пустые.
+ */
+export function stockLines(
+  addresses: string[],
+  usage: Map<string, CellUse>,
+  empty: 'skip' | 'add' | 'only' = 'skip',
+): StockLine[] {
+  const out: StockLine[] = [];
+  for (const address of addresses) {
+    const u = usage.get(address);
+    const lines: StockLine[] = [];
+    for (const [k, qty] of Object.entries(u?.items ?? {})) {
+      if (qty <= 0) continue;
+      const [productId, batchId] = splitKey(k);
+      lines.push({ address, productId, batchId, qty });
+    }
+    for (const [tareTypeId, qty] of Object.entries(u?.tare ?? {}))
+      if (qty > 0) lines.push({ address, tareTypeId, qty });
+    if (lines.length ? empty !== 'only' : empty !== 'skip') out.push(...(lines.length ? lines : [{ address, qty: 0 }]));
+  }
+  return out;
 }
 
 export interface TareBalance {

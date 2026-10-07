@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useStore, useWarehouse } from '../store';
 import type { MaterialGroup, Product } from '../types';
 import { useMonitor, useProducts, useProductsMap, useTareMap } from '../lib/derived';
-import { GROUPS, STORAGE_UNITS, fmtQtyFull, tareCount } from '../lib/materials';
+import { GROUPS, STORAGE_UNITS, fmtQty, fmtQtyFull, tareCount } from '../lib/materials';
 import { batchStock, splitKey } from '../lib/inventory';
 import { DAY, fmtTons } from '../lib/analytics';
 import { Icon } from '../components/icons';
@@ -132,9 +132,14 @@ function ProductDrawer({ p, row }: { p: Product; row?: Row }) {
                     {b.batch?.receivedAt && `приход ${new Date(b.batch.receivedAt).toLocaleDateString('ru-RU')}`}
                   </div>
                   <div className="batch-cells">
-                    {b.cells.map((a) => (
-                      <button key={a} className="cellchip mono" onClick={() => st().openCell(a)}>
-                        {a}
+                    {b.cells.map(({ address, qty }) => (
+                      <button
+                        key={address}
+                        className="cellchip"
+                        onClick={() => st().openCell(address)}
+                        title="Открыть карточку ячейки"
+                      >
+                        <span className="mono">{address}</span> <b>{fmtQty(qty, p.unit)}</b>
                       </button>
                     ))}
                   </div>
@@ -151,11 +156,21 @@ function ProductDrawer({ p, row }: { p: Product; row?: Row }) {
           className="btn small primary"
           disabled={!cells.length}
           onClick={() => {
+            st().setSearch(p.sku);
+            st().setSection('cells');
+          }}
+        >
+          <Icon name="cells" size={15} /> Ячейки с этим ТМЦ ({cells.length})
+        </button>
+        <button
+          className="btn small"
+          disabled={!cells.length}
+          onClick={() => {
             st().setProductFilter(null);
             st().showCells(cells);
           }}
         >
-          <Icon name="cube" size={15} /> Показать на 3D ({cells.length})
+          <Icon name="cube" size={15} /> Показать на 3D
         </button>
       </div>
     </aside>

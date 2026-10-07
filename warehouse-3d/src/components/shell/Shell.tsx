@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, useWarehouse } from '../../store';
 import type { Section } from '../../types';
 import { Icon, type IconName } from '../icons';
-import { useCells, useInventory, useMonitor, useProducts } from '../../lib/derived';
+import { useInventory, useMonitor, useProducts } from '../../lib/derived';
 import { buildAlerts, type Alert } from '../../lib/alerts';
 import { timeAgo } from '../../lib/analytics';
-import { splitKey } from '../../lib/inventory';
+import { fmtQty } from '../../lib/materials';
+import { fold, searchCells } from '../../lib/search';
 
 export const NAV: { id: Section; title: string; icon: IconName; hint: string }[] = [
   { id: 'home', title: 'Обзор', icon: 'home', hint: 'Склады, помещения и ячейки: заполнение и состояние' },
@@ -169,22 +170,43 @@ interface SearchHit {
   go: () => void;
 }
 
-/** Поиск по адресу ячейки (можно сканером штрихкода), ТМЦ, партии и плавке. */
+/**
+ * Поиск по адресу ячейки (можно сканером штрихкода) и по номенклатуре: ТМЦ, артикул, партия, плавка.
+ * Запрос общий с разделом «Ячейки»: найденные ячейки подсвечиваются на 3D и выводятся списком.
+ */
 function GlobalSearch() {
-  const [q, setQ] = useState('');
+  const q = useStore((s) => s.search);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useOutside(ref, () => setOpen(false));
   const products = useProducts();
-  const inv = useInventory();
-  const { cells, byAddress } = useCells();
+  const m = useMonitor();
   const st = useStore.getState;
 
+  // Где лежит каждый ТМЦ: ячеек и количество
+  const stock = useMemo(() => {
+    const out = new Map<string, { cells: number; qty: number }>();
+    for (const u of m?.usage.values() ?? []) {
+      for (const [pid, qty] of Object.entries(u.byProduct)) {
+        const e = out.get(pid) ?? { cells: 0, qty: 0 };
+        e.cells++;
+        e.qty += qty;
+        out.set(pid, e);
+      }
+    }
+    return out;
+  }, [m]);
+
   const hits = useMemo<SearchHit[]>(() => {
-    const t = q.trim().toUpperCase();
-    if (t.length < 2) return [];
+    const t = q.trim();
+    if (t.length < 2 || !m) return [];
+    const f = fold(t);
+    const inCells = (text: string) => () => {
+      st().setSearch(text);
+      st().setSection('cells');
+    };
     const out: SearchHit[] = [];
-    const exact = byAddress.get(q.trim()) ?? cells.find((c) => c.address.toUpperCase() === t);
+    const exact = m.idx.cells.find((c) => fold(c.address) === f);
     if (exact)
       out.push({
         key: `x${exact.key}`,
@@ -193,9 +215,54 @@ function GlobalSearch() {
         sub: 'Ячейка — открыть карточку',
         go: () => st().openCell(exact.address),
       });
+    const found = searchCells(m, t);
+    if (found.size)
+      out.push({
+        key: 'all',
+        icon: 'cells',
+        title: `«${t}» в ячейках`,
+        sub: `${found.size.toLocaleString('ru-RU')} яч. — список номенклатуры по ячейкам`,
+        go: inCells(t),
+      });
     let n = 0;
-    for (const c of cells) {
-      if (c === exact || !c.address.toUpperCase().includes(t)) continue;
+    for (const p of products) {
+      if (![p.name, p.sku, p.barcode ?? '', p.attrs?.drawing ?? ''].some((v) => fold(String(v)).includes(f))) continue;
+      const e = stock.get(p.id);
+      out.push({
+        key: `p${p.id}`,
+        icon: 'boxes',
+        title: p.name,
+        sub: e ? `${p.sku} · ${e.cells} яч. · ${fmtQty(e.qty, p.unit)}` : `${p.sku} · нет на складе`,
+        go: e
+          ? inCells(p.sku)
+          : () => {
+              st().setSection('items');
+              st().openProduct(p.id);
+            },
+      });
+      if (++n >= 6) break;
+    }
+    // Партии и плавки
+    n = 0;
+    for (const b of Object.values(m.inv?.batches ?? {})) {
+      const key = [b.number, b.heat, b.cert, b.order].find((v) => v && fold(v).includes(f));
+      if (!key) continue;
+      const where = searchCells(m, key).size;
+      if (!where) continue;
+      const p = m.pm.get(b.productId);
+      out.push({
+        key: `b${b.id}`,
+        icon: 'target',
+        title: b.heat ? `Плавка ${b.heat}` : `Партия ${b.number}`,
+        sub: `${p?.name ?? ''} · ${where} яч.`,
+        go: inCells(key),
+      });
+      if (++n >= 4) break;
+    }
+    // Ячейки по части адреса
+    n = 0;
+    for (const c of m.idx.cells) {
+      if (c === exact || !fold(c.address).includes(f)) continue;
       out.push({
         key: `c${c.key}`,
         icon: 'grid',
@@ -203,52 +270,20 @@ function GlobalSearch() {
         sub: c.virtual ? 'Место учёта' : `Ячейка · ярус ${c.tier}`,
         go: () => st().openCell(c.address),
       });
-      if (++n >= 5) break;
-    }
-    n = 0;
-    for (const p of products) {
-      if (![p.name, p.sku, p.barcode ?? '', p.attrs?.drawing ?? ''].some((v) => v.toUpperCase().includes(t))) continue;
-      out.push({
-        key: `p${p.id}`,
-        icon: 'boxes',
-        title: p.name,
-        sub: `ТМЦ · ${p.sku}`,
-        go: () => {
-          st().setSection('items');
-          st().openProduct(p.id);
-        },
-      });
-      if (++n >= 6) break;
-    }
-    // Партии и плавки: найти, где лежат
-    n = 0;
-    for (const b of Object.values(inv?.batches ?? {})) {
-      if (![b.number, b.heat ?? '', b.cert ?? '', b.order ?? ''].some((v) => v.toUpperCase().includes(t))) continue;
-      const where = Object.entries(inv?.stock ?? {})
-        .filter(([, items]) => Object.keys(items).some((k) => splitKey(k)[1] === b.id))
-        .map(([a]) => a);
-      if (!where.length) continue;
-      const p = products.find((x) => x.id === b.productId);
-      out.push({
-        key: `b${b.id}`,
-        icon: 'target',
-        title: `${b.heat ? `Плавка ${b.heat}` : `Партия ${b.number}`}`,
-        sub: `${p?.name ?? ''} · ${where.length} яч.`,
-        go: () => st().showCells(where),
-      });
       if (++n >= 4) break;
     }
     return out;
-  }, [q, products, inv, cells, byAddress, st]);
+  }, [q, products, m, stock, st]);
 
   return (
     <div className="gsearch" ref={ref}>
       <Icon name="search" size={16} />
       <input
+        id="global-search"
         placeholder="Адрес ячейки, ТМЦ, партия, плавка…"
         value={q}
         onChange={(e) => {
-          setQ(e.target.value);
+          st().setSearch(e.target.value);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
@@ -260,6 +295,18 @@ function GlobalSearch() {
           if (e.key === 'Escape') setOpen(false);
         }}
       />
+      {q && (
+        <button
+          className="icon-btn small"
+          onClick={() => {
+            st().setSearch('');
+            setOpen(false);
+          }}
+          title="Сбросить поиск"
+        >
+          <Icon name="close" size={13} />
+        </button>
+      )}
       {open && q.trim().length >= 2 && (
         <div className="dropdown search-results">
           {!hits.length && <div className="dropdown-empty">Ничего не найдено</div>}

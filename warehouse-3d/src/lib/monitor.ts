@@ -69,6 +69,9 @@ export interface Monitor {
   violationsAt: Map<string, Violation[]>;
   lastMove: Record<string, number>;
   activity: Map<string, CellActivity>;
+  /** Справочники ТМЦ и тары по id */
+  pm: Map<string, Product>;
+  tm: Map<string, TareType>;
 }
 
 interface CacheEntry {
@@ -132,6 +135,8 @@ export function monitorOf(
     violationsAt,
     lastMove,
     activity: cellActivity(inv?.events ?? [], 30, now),
+    pm,
+    tm,
   };
   monitors.set(w.id, { w, inv, products, tareTypes, m });
   return m;

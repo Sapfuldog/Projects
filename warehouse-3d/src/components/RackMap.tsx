@@ -1,26 +1,57 @@
-import type { Cell, Rack } from '../types';
+import type { Cell, Product, Rack } from '../types';
 import type { Monitor } from '../lib/monitor';
-import { CELL_TYPES } from '../lib/materials';
+import type { CellUse } from '../lib/inventory';
+import { CELL_TYPES, GROUPS, fmtQty } from '../lib/materials';
 import { RACK_SPEC, tierBases } from '../lib/rack';
 import { LEVEL_COLOR, ageColor, fillColor, loadColor } from '../lib/colors';
 import { DAY } from '../lib/analytics';
 import { pct } from './ui';
 
-export type MapMode = 'fill' | 'control' | 'load' | 'age' | 'type';
+export type MapMode = 'fill' | 'group' | 'control' | 'load' | 'age' | 'type';
 
 export const MAP_MODES: { value: MapMode; label: string }[] = [
   { value: 'fill', label: 'Заполнение' },
+  { value: 'group', label: 'ТМЦ' },
   { value: 'control', label: 'Контроль' },
   { value: 'load', label: 'Нагрузка' },
   { value: 'age', label: 'Движение' },
-  { value: 'type', label: 'Тип ячейки' },
+  { value: 'type', label: 'Тип' },
 ];
+
+/** Основной ТМЦ ячейки: с наибольшим весом (для штучных без веса — по количеству). */
+export function mainProduct(u: CellUse | undefined, m: Monitor): Product | undefined {
+  let best: Product | undefined;
+  let max = -1;
+  for (const [pid, q] of Object.entries(u?.byProduct ?? {})) {
+    const p = m.pm.get(pid);
+    const v = p ? q * (p.weight || 1) : -1;
+    if (p && v > max) [best, max] = [p, v];
+  }
+  return best;
+}
+
+/** Содержимое ячейки строками: «Шайба 12 плоская оцинк. — 109,2 кг», пустая тара. */
+export function contentLines(u: CellUse | undefined, m: Monitor, max = 4): string[] {
+  const out: string[] = [];
+  for (const [pid, q] of Object.entries(u?.byProduct ?? {})) {
+    const p = m.pm.get(pid);
+    out.push(`${p?.name ?? pid} — ${p ? fmtQty(q, p.unit) : q}`);
+  }
+  for (const [tid, n] of Object.entries(u?.tare ?? {})) out.push(`Пустая тара ${m.tm.get(tid)?.code ?? tid} — ${n} шт`);
+  return out.length > max ? [...out.slice(0, max), `ещё ${out.length - max}…`] : out;
+}
 
 /** Цвет ячейки на карте стеллажа. */
 export function cellTone(c: Cell, m: Monitor, mode: MapMode): string {
   const u = m.usage.get(c.address);
   const f = m.fill.get(c.address) ?? 0;
   switch (mode) {
+    case 'group': {
+      const p = mainProduct(u, m);
+      if (p) return GROUPS[p.group].color;
+      if (u && Object.keys(u.tare).length) return '#a16207';
+      return f > 0 ? '#94a3b8' : 'transparent';
+    }
     case 'control':
       return m.worst.has(c.address) ? LEVEL_COLOR[m.worst.get(c.address)!] : f > 0 ? LEVEL_COLOR.ok : 'transparent';
     case 'load':
@@ -65,7 +96,7 @@ export function RackFacade({
   const tiers = rack.tiers.map((t, i) => ({ t, i })).reverse();
   const load = m.loads.get(rack.id);
   return (
-    <div className={`facade2 ${compact ? 'compact' : ''} kind-${rack.kind}`}>
+    <div className={`facade2 ${compact ? 'compact' : ''} kind-${rack.kind} ${highlight ? 'has-hl' : ''}`}>
       {!compact && (
         <div className="f2-row f2-head">
           <span className="f2-tier" />
@@ -115,6 +146,7 @@ export function RackFacade({
                 const u = m.usage.get(c.address);
                 const tone = cellTone(c, m, mode);
                 const lvl = m.worst.get(c.address);
+                const content = contentLines(u, m);
                 const cls = [
                   'f2-cell',
                   c.blocked ? 'blocked' : '',
@@ -128,7 +160,10 @@ export function RackFacade({
                     key={p}
                     className={cls}
                     onClick={onPick ? () => onPick(c) : undefined}
-                    title={`${c.address} · ${CELL_TYPES[c.cellType].title} · ${pct(f)}${c.places ? ` · мест ${Math.min(u?.places ?? 0, 999)}/${c.places}` : ''}${c.blocked ? ' · заблокирована' : ''}`}
+                    title={[
+                      `${c.address} · ${CELL_TYPES[c.cellType].title} · ${pct(f)}${c.places ? ` · мест ${Math.min(u?.places ?? 0, 999)}/${c.places}` : ''}${c.blocked ? ' · заблокирована' : ''}`,
+                      ...(content.length ? content : [f > 0 ? 'состав не передан' : 'свободна']),
+                    ].join('\n')}
                   >
                     <i
                       className="f2-fill"

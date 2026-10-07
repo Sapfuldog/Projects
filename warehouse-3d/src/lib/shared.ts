@@ -118,6 +118,8 @@ export function mergeRemote(local: string | null, remote: Remote, version: numbe
 
 /** Чтение состояния при запуске; если приложение открыто с сервера компании — с общей моделью. */
 export async function loadWithServer(local: Promise<string | null>, version: number): Promise<string | null> {
+  // Однофайловая сборка и страница, открытая файлом, никогда не раздаются сервером компании
+  if (import.meta.env.MODE === 'single' || location.protocol === 'file:') return local;
   const remote = await getJson(API, 2500);
   // Открыто без сервера (файлом, артефактом, в режиме разработки) — только сохранённое в браузере, без спешки:
   // иначе медленный IndexedDB приняли бы за пустой и записали демо поверх данных

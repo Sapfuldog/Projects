@@ -23,6 +23,21 @@
 - У сотрудников — Chrome, Edge, Firefox или Яндекс Браузер актуальной версии с включённым аппаратным
   ускорением (3D работает через WebGL). HTTPS не обязателен.
 
+## Скачать без git
+
+Репозиторий открытый: архив ветки скачивается по ссылке, git не нужен. В PowerShell в нужной папке:
+
+```powershell
+Invoke-WebRequest "https://github.com/Sapfuldog/Projects/archive/refs/heads/claude/warehouse-3d-map-mvm06a.zip" `
+  -OutFile sklad-3d.zip -UseBasicParsing
+Expand-Archive sklad-3d.zip -DestinationPath .
+cd .\Projects-claude-warehouse-3d-map-mvm06a\warehouse-3d
+```
+
+Это исходный код: дальше нужен шаг `npm ci` и `npm run build` (см. ниже), для него нужен доступ к npm.
+В PowerShell пишите `npm.cmd` вместо `npm` — иначе Windows с запретом сценариев не даст запустить `npm.ps1`.
+Готовый пакет без сборки — `npm run release` (раздел «Сеть без интернета»).
+
 ## Быстрая проверка
 
 ```bash
@@ -84,7 +99,7 @@ sudo ./deploy/linux/uninstall.sh   # удалить службу (данные �
 приложения:
 
 ```powershell
-npm ci; npm run build          # не нужно, если это готовый пакет
+npm.cmd ci; npm.cmd run build  # не нужно, если это готовый пакет
 powershell -ExecutionPolicy Bypass -File .\deploy\windows\install.ps1             # порт 8080
 powershell -ExecutionPolicy Bypass -File .\deploy\windows\install.ps1 -Port 9000 -DataDir D:\Sklad3D
 ```

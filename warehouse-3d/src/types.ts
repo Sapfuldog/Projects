@@ -241,6 +241,8 @@ export interface Warehouse {
   /** Места учёта виртуального склада */
   places: VirtualPlace[];
   connection: Connection;
+  /** Из какого готового шаблона создан объект (например, «mosverf») */
+  template?: string;
 }
 
 // ---------- Оборудование и элементы окружения ----------

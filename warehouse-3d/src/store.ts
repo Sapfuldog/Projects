@@ -33,6 +33,7 @@ import type {
 } from './types';
 import {
   demoIT,
+  demoMoscowShipyard,
   demoShipyard,
   emptyWarehouse,
   newFloor,
@@ -52,7 +53,7 @@ import { DEMO_CONSUMERS, DEMO_PRODUCTS } from './lib/catalog';
 import { demoSnapshot, demoTick } from './lib/demoData';
 import { historyPoint, locationStats, pushHistory } from './lib/analytics';
 import type { ImportResult } from './lib/snapshot';
-import { loadWithServer, startSync } from './lib/shared';
+import { loadWithServer, startSync, useServer } from './lib/shared';
 
 export type ViewMode = '3d' | 'plan' | 'split';
 /** Стены в 3D: срез (видно внутренности), полная высота, скрыть. */
@@ -163,6 +164,8 @@ interface State {
   placing: EquipmentType | null;
   toasts: Toast[];
   notifSeenAt: number;
+  /** Объекты-шаблоны, уже добавленные в этот браузер при обновлении приложения */
+  seeds: string[];
   user: User;
   openProductId: string | null;
   /** Открытый диалог подтверждения */
@@ -195,7 +198,7 @@ interface Actions {
   focusOn: (x: number, y: number, z: number, cam?: Focus['cam']) => void;
   cameraPreset: (p: CamPreset) => void;
 
-  createWarehouse: (kind: 'empty' | 'virtual' | 'demo' | 'demo-it') => string;
+  createWarehouse: (kind: 'empty' | 'virtual' | 'demo' | 'demo-it' | 'mosverf') => string;
   duplicateWarehouse: (id: string) => void;
   deleteWarehouse: (id: string) => void;
   setCurrent: (id: string) => void;
@@ -412,6 +415,7 @@ export const useStore = create<Store>()(
         placing: null,
         toasts: [],
         notifSeenAt: 0,
+        seeds: [],
         user: { name: 'Начальник склада', role: 'Центральный склад ТМЦ' },
         openProductId: null,
         dialog: null,
@@ -466,11 +470,13 @@ export const useStore = create<Store>()(
               ? demoShipyard()
               : kind === 'demo-it'
                 ? demoIT()
-                : emptyWarehouse(
-                    kind === 'virtual' ? `Виртуальный склад №${n}` : `Склад №${n}`,
-                    kind === 'virtual' ? 'virtual' : 'physical',
-                  );
-          if ((kind === 'demo' || kind === 'demo-it') && s0.warehouses.some((x) => x.name === w.name))
+                : kind === 'mosverf'
+                  ? demoMoscowShipyard()
+                  : emptyWarehouse(
+                      kind === 'virtual' ? `Виртуальный склад №${n}` : `Склад №${n}`,
+                      kind === 'virtual' ? 'virtual' : 'physical',
+                    );
+          if (kind !== 'empty' && kind !== 'virtual' && s0.warehouses.some((x) => x.name === w.name))
             w.name = `${w.name} (${n})`;
           setState((s) => {
             if (kind === 'demo' || kind === 'demo-it') {
@@ -1060,6 +1066,7 @@ export const useStore = create<Store>()(
         level: s.level,
         user: s.user,
         notifSeenAt: s.notifSeenAt,
+        seeds: s.seeds,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<State>;
@@ -1073,15 +1080,29 @@ export const useStore = create<Store>()(
   ),
 );
 
+/** Шаблоны, которые один раз добавляются при обновлении приложения */
+const SEEDS = ['mosverf'] as const;
+
 function finishHydration() {
   const s = useStore.getState();
   if (s.hydrated) return;
   if (!s.warehouses.length) {
-    // Первый запуск: склад завода и виртуальный IT-склад
-    const id = s.createWarehouse('demo');
+    // Первый запуск: Московская верфь по карте, демо-склад завода и виртуальный IT-склад
+    const id = s.createWarehouse('mosverf');
+    useStore.getState().createWarehouse('demo');
     useStore.getState().createWarehouse('demo-it');
     useStore.getState().setCurrent(id);
+    useStore.setState({ seeds: [...SEEDS] });
   } else if (!s.warehouses.some((w) => w.id === s.currentId)) s.setCurrent(s.warehouses[0].id);
+  // Новый шаблон в обновлении: в этом браузере — добавить и открыть один раз. На сервере компании общую
+  // модель не трогаем, чтобы не вернуть удалённое и не задвоить: там объект добавляют кнопкой в «Объектах».
+  for (const t of SEEDS) {
+    const st = useStore.getState();
+    if ((st.seeds ?? []).includes(t)) continue;
+    if (useServer.getState().mode === 'local' && !st.warehouses.some((w) => w.template === t))
+      st.setCurrent(st.createWarehouse(t));
+    useStore.setState((x) => ({ seeds: [...(x.seeds ?? []), t] }));
+  }
   ensureDemoInventory();
   useStore.setState({ hydrated: true, past: [], future: [] });
 }

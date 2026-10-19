@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Product, Rack, Warehouse } from '../types';
-import { demoIT, demoShipyard, emptyWarehouse, newZone, newRoom } from './demo';
+import { demoIT, demoMoscowShipyard, demoShipyard, emptyWarehouse, newZone, newRoom } from './demo';
+import { bbox, polygonArea, polygonInside, selfIntersects } from './geometry';
 import { DEMO_CONSUMERS, DEMO_PRODUCTS } from './catalog';
 import { DEFAULT_TARE } from './materials';
 import { buildCells, defaultPlaces, rackCells, rackContext, rackHeight, rackWarnings, tierBases } from './rack';
@@ -401,5 +402,48 @@ describe('номенклатура в ячейках и поиск', () => {
       { address: 'A-01-01-02', qty: 0.5 },
     ]);
     expect(b.qty).toBe(1.75);
+  });
+});
+
+describe('Московская верфь по карте', () => {
+  const w = demoMoscowShipyard();
+  const room = (code: string) => w.rooms.find((r) => r.code === code)!;
+
+  it('склад 74с2 — три этажа, первый 5 м; пристройки одноэтажные', () => {
+    expect(w.floors.map((f) => [f.elevation, f.height])).toEqual([
+      [0, 5],
+      [5, 4],
+      [9, 4],
+    ]);
+    const floorOf = (code: string) => w.floors.findIndex((f) => f.id === room(code).floorId) + 1;
+    expect(['С1', 'С2', 'С3'].map(floorOf)).toEqual([1, 2, 3]);
+    expect(['ЮП', 'ВП', 'ЗП'].map(floorOf)).toEqual([1, 1, 1]);
+    // основной корпус и северо-восточная часть: ≈ 41 × 20,5 м + 14,4 × 16 м
+    expect(polygonArea(room('С1').points)).toBeCloseTo(41 * 20.5 + 14.4 * 16, -1);
+  });
+
+  it('производственный корпус ≈ 290 × 73 м: высокий пролёт и пониженная часть без зазоров', () => {
+    const hall = [...room('ПК').points, ...room('ПК2').points];
+    const b = bbox(hall);
+    expect([b.maxX - b.minX, b.maxY - b.minY]).toEqual([290, 73]);
+    expect(polygonArea(room('ПК').points) + polygonArea(room('ПК2').points)).toBeCloseTo(290 * 73, 0);
+    expect(room('ПК').height).toBeGreaterThan(room('ПК2').height);
+    // от склада до цеха — около 36 м двора
+    expect(b.minX - bbox(room('С1').points).maxX).toBeCloseTo(35.6, 1);
+  });
+
+  it('контуры корректны, зоны внутри помещений, ворота на стенах первого этажа', () => {
+    for (const r of w.rooms) expect(selfIntersects(r.points), r.name).toBe(false);
+    for (const z of w.zones) expect(polygonInside(z.points, w.rooms.find((r) => r.id === z.roomId)!.points)).toBe(true);
+    const gates = w.equipment.filter((e) => e.type === 'gate');
+    expect(gates).toHaveLength(5);
+    expect(gates.every((g) => g.floorId === w.floors[0].id)).toBe(true);
+    const hallWest = bbox(room('ПК2').points).minX;
+    expect(gates.filter((g) => g.name.startsWith('Цех')).every((g) => g.x === hallWest && g.rotation === 90)).toBe(
+      true,
+    );
+    expect(gates.filter((g) => g.name.startsWith('Склад'))).toHaveLength(3);
+    const m = monitorOf(w, undefined, DEMO_PRODUCTS, DEFAULT_TARE);
+    expect(m.idx.cells).toHaveLength(0);
   });
 });

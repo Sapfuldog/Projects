@@ -54,30 +54,46 @@ export const useHover = create<{
 }));
 
 const v = new THREE.Vector3();
+type Box = { x: number; y: number; w: number; h: number };
 
 export function LabelProjector({ registry }: { registry: LabelRegistry }) {
   const camera = useThree((s) => s.camera);
   const size = useThree((s) => s.size);
-  const place = (el: HTMLDivElement, x: number, y: number, z: number, maxDist?: number) => {
-    if (maxDist !== undefined && camera.position.distanceTo(v.set(x, y, z)) > maxDist) {
+  const place = (el: HTMLDivElement, l: Label3D, taken?: Box[]) => {
+    if (l.maxDist !== undefined && camera.position.distanceTo(v.set(l.x, l.y, l.z)) > l.maxDist) {
       el.style.visibility = 'hidden';
       return;
     }
-    v.set(x, y, z).project(camera);
+    v.set(l.x, l.y, l.z).project(camera);
     if (v.z > 1 || v.z < -1 || Math.abs(v.x) > 1.15 || Math.abs(v.y) > 1.15) {
       el.style.visibility = 'hidden';
       return;
     }
+    const x = ((v.x + 1) / 2) * size.width;
+    const y = ((1 - v.y) / 2) * size.height;
+    // Подпись помещения стоит флажком в его углу и уходит внутрь, остальные — по центру точки
+    const left = l.cls.startsWith('room');
+    if (taken) {
+      // Подписи помещений и отметок не налезают друг на друга: остаётся та, что раньше в списке (крупные первыми)
+      const w = el.offsetWidth;
+      const b = { x: left ? x : x - w / 2, y: y - el.offsetHeight / 2, w, h: el.offsetHeight };
+      if (taken.some((o) => b.x < o.x + o.w && b.x + b.w > o.x && b.y < o.y + o.h && b.y + b.h > o.y)) {
+        el.style.visibility = 'hidden';
+        return;
+      }
+      taken.push(b);
+    }
     el.style.visibility = 'visible';
-    el.style.transform = `translate(${((v.x + 1) / 2) * size.width}px, ${((1 - v.y) / 2) * size.height}px) translate(-50%, -50%)`;
+    el.style.transform = `translate(${x}px, ${y}px) translate(${left ? 0 : '-50%'}, -50%)`;
   };
   useFrame(() => {
-    const boxes: { x: number; y: number; w: number; h: number }[] = [];
+    const boxes: Box[] = [];
+    const taken: Box[] = [];
     for (const l of registry.labels) {
       const el = registry.els.get(l.key);
       if (!el) continue;
       if (l.cls !== 'callout') {
-        place(el, l.x, l.y, l.z, l.maxDist);
+        place(el, l, l.cls.startsWith('room') || l.cls === 'elev' ? taken : undefined);
         continue;
       }
       // Выноски не перекрывают друг друга: ищем ближайшее свободное место выше или ниже, иначе прячем

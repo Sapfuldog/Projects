@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useStore, useWarehouse } from '../../store';
 import { useConsumers, useMonitor, useProductsMap, useTareMap, warehouseBounds } from '../../lib/derived';
-import { polygonCentroid, round, bbox } from '../../lib/geometry';
+import { polygonArea, polygonCentroid, round, bbox } from '../../lib/geometry';
 import { rackContext, rackHeight, rackLength, tierBases } from '../../lib/rack';
 import { EQUIPMENT } from '../../lib/equipment';
 import { CELL_TYPES, fmtQty } from '../../lib/materials';
@@ -28,6 +28,13 @@ const fmtM = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2
 const fmtElev = (v: number) =>
   `${v >= 0 ? '+' : '−'}${Math.abs(v).toLocaleString('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
 
+/** Взгляд на весь объект; вытянутую площадку (верфь, цех) показываем поперёк, чтобы она легла вдоль экрана. */
+function fitDir(dx: number, dz: number) {
+  if (dx > dz * 2.5) return new THREE.Vector3(0.2, 0.75, 0.9).normalize();
+  if (dz > dx * 2.5) return new THREE.Vector3(0.9, 0.75, 0.2).normalize();
+  return new THREE.Vector3(0.5, 0.78, 0.72).normalize();
+}
+
 /** Подгоняет камеру под объект, выполняет пресеты (изометрия, сверху, спереди) и плавные наведения. */
 function CameraRig({ w }: { w: Warehouse }) {
   const three = useThree();
@@ -46,7 +53,7 @@ function CameraRig({ w }: { w: Warehouse }) {
 
   /** Вид на весь объект или на выбранный этаж. */
   const view = useCallback(
-    (dir: THREE.Vector3, k = 0.5) => {
+    (dir: THREE.Vector3 | null, k = 0.5) => {
       const info = sceneInfo(w, explode, floorFilter);
       const rooms = floorFilter ? w.rooms.filter((r) => r.floorId === floorFilter) : [];
       const b = rooms.length ? bbox(rooms.flatMap((r) => r.points)) : warehouseBounds(w);
@@ -54,12 +61,13 @@ function CameraRig({ w }: { w: Warehouse }) {
       const cx = (b.minX + b.maxX) / 2;
       const cz = (b.minY + b.maxY) / 2;
       const size = Math.max(b.maxX - b.minX, b.maxY - b.minY, 12);
+      const d = dir ?? fitDir(b.maxX - b.minX, b.maxY - b.minY);
       const persp = camera as THREE.PerspectiveCamera;
       const fov = ((persp.fov ?? 40) * Math.PI) / 180;
       const dist = (size * k) / Math.tan(fov / 2) / Math.min(1, persp.aspect || 1);
       return {
         target: new THREE.Vector3(cx, y, cz),
-        pos: new THREE.Vector3(cx + dir.x * dist, y + dir.y * dist, cz + dir.z * dist),
+        pos: new THREE.Vector3(cx + d.x * dist, y + d.y * dist, cz + d.z * dist),
       };
     },
     [w, camera, floorFilter, explode],
@@ -71,13 +79,13 @@ function CameraRig({ w }: { w: Warehouse }) {
     if (!controls || lastFloor.current === floorFilter) return;
     lastFloor.current = floorFilter;
     useHover.getState().set(null);
-    anim.current = { ...view(new THREE.Vector3(0.5, 0.78, 0.72).normalize(), floorFilter ? 0.62 : 0.5), t: 0 };
+    anim.current = { ...view(null, floorFilter ? 0.62 : 0.5), t: 0 };
   }, [floorFilter, controls, view]);
 
   useEffect(() => {
     if (!controls || fittedFor.current === w.id) return;
     fittedFor.current = w.id;
-    const v = view(new THREE.Vector3(0.5, 0.78, 0.72).normalize());
+    const v = view(null);
     controls.target.copy(v.target);
     camera.position.copy(v.pos);
     controls.update();
@@ -89,7 +97,7 @@ function CameraRig({ w }: { w: Warehouse }) {
       iso: new THREE.Vector3(1, 0.95, 1).normalize(),
       top: new THREE.Vector3(0, 1, 0.0001),
       front: new THREE.Vector3(0, 0.32, 1).normalize(),
-      fit: new THREE.Vector3(0.5, 0.78, 0.72).normalize(),
+      fit: null,
     };
     useHover.getState().set(null);
     anim.current = { ...view(dirs[preset.preset], preset.preset === 'top' ? 0.5 : 0.55), t: 0 };
@@ -276,10 +284,14 @@ function useLabels(
     const w = info.w;
     const out: Label3D[] = [];
     const st = useStore.getState;
-    // Помещения (в мониторинге названия есть на выносках)
-    if (show.labels && !(mode === 'monitor' && show.callouts))
-      for (const r of w.rooms) {
-        if (!info.roomVisible(r)) continue;
+    // На большой площадке (верфь, завод) подписи видны издалека
+    const b0 = warehouseBounds(w);
+    const reach = Math.max(1, Math.max(b0.maxX - b0.minX, b0.maxY - b0.minY) / 120);
+    // Помещения (в мониторинге у помещений с ячейками названия есть на выносках); крупные подписываются первыми
+    const callouts = mode === 'monitor' && show.callouts;
+    if (show.labels)
+      for (const r of [...w.rooms].sort((a, b) => polygonArea(b.points) - polygonArea(a.points))) {
+        if (!info.roomVisible(r) || (callouts && m.stats.byRoom.get(r.id)?.cells)) continue;
         const b = bbox(r.points);
         const base = info.roomBase(r);
         out.push({
@@ -291,7 +303,7 @@ function useLabels(
           cls: `room ${r.hazard ? 'hazard' : ''}`,
           icon: r.hazard ? 'alert' : r.kind === 'yard' ? 'metal' : r.kind === 'canopy' ? 'pallet' : 'warehouse',
           color: r.color,
-          maxDist: 260,
+          maxDist: 260 * reach,
         });
       }
     // Отметки этажей
@@ -308,7 +320,7 @@ function useLabels(
           text: `${fmtElev(f.elevation)} · ${f.name}`,
           cls: 'elev',
           icon: 'floors',
-          maxDist: 220,
+          maxDist: 220 * reach,
         });
       }
     }
@@ -554,6 +566,9 @@ export function Scene3D({ mode = 'monitor' }: { mode?: SceneMode }) {
   const placeFloor = floorFilter
     ? (w.floors.find((f) => f.id === floorFilter)?.elevation ?? 0) + info.lift(floorFilter)
     : 0;
+  // Туман и отдаление камеры — по размеру объекта, чтобы большая площадка не тонула в дымке
+  const bounds = warehouseBounds(w);
+  const span = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
 
   return (
     <div className="scene">
@@ -565,7 +580,7 @@ export function Scene3D({ mode = 'monitor' }: { mode?: SceneMode }) {
         gl={{ antialias: true, preserveDrawingBuffer: true, localClippingEnabled: true }}
       >
         <color attach="background" args={[bg]} />
-        <fog attach="fog" args={[bg, 220, 620]} />
+        <fog attach="fog" args={[bg, Math.max(220, span * 1.2), Math.max(620, span * 3)]} />
         <hemisphereLight args={[dark ? '#b8c7e0' : '#ffffff', dark ? '#1e293b' : '#c9d3c0', dark ? 1.0 : 1.25]} />
         <ambientLight intensity={dark ? 0.35 : 0.45} />
         <Sun w={w} dark={dark} />
@@ -575,11 +590,11 @@ export function Scene3D({ mode = 'monitor' }: { mode?: SceneMode }) {
           dampingFactor={0.12}
           maxPolarAngle={Math.PI / 2 - 0.03}
           minDistance={2}
-          maxDistance={900}
+          maxDistance={Math.max(900, span * 3)}
         />
         <CameraRig w={w} />
         <Clipper clip={clip} />
-        <Ground bounds={warehouseBounds(w)} dark={dark} />
+        <Ground bounds={bounds} dark={dark} />
         <RoomsLayer
           info={info}
           wallMode={wallMode}

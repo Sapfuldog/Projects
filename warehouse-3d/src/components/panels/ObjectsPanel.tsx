@@ -202,6 +202,9 @@ export function ObjectsPanel() {
           >
             <Icon name="virtual" size={15} /> Виртуальный склад
           </button>
+          <button className="btn small" onClick={() => st().createWarehouse('mosverf')}>
+            + Московская верфь (по карте)
+          </button>
           <button className="btn small" onClick={() => st().createWarehouse('demo')}>
             + Демо: склад завода
           </button>

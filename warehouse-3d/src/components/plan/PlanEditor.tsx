@@ -2,7 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Equipment, Mezzanine, Pt, Rack, Room, Warehouse } from '../../types';
 import { useStore, useWarehouse } from '../../store';
 import { useMonitor, warehouseBounds } from '../../lib/derived';
-import { bbox, dist, fmt, localToPlan, pointInPolygon, polygonCentroid, rectCorners, round } from '../../lib/geometry';
+import {
+  bbox,
+  dist,
+  fmt,
+  localToPlan,
+  pointInPolygon,
+  polygonArea,
+  polygonCentroid,
+  rectCorners,
+  round,
+} from '../../lib/geometry';
 import { RACK_SPEC, rackDepth, rackFootprint, rackLength } from '../../lib/rack';
 import { EQUIPMENT } from '../../lib/equipment';
 import { fillColor } from '../../lib/colors';
@@ -41,6 +51,38 @@ function roomLabelPoint(points: Pt[]): Pt & { anchor: 'start' | 'middle' } {
   const p = { x: b.minX + 0.6, y: b.minY + 0.6 };
   if (pointInPolygon(p, points)) return { ...p, anchor: 'start' };
   return { ...polygonCentroid(points), anchor: 'middle' };
+}
+
+/**
+ * Подписи помещений на плане: выбранное и крупные — первыми. Название может немного выходить за контур;
+ * не помещается или налезает на соседнюю подпись — пишем код помещения, а для мелкого не пишем ничего.
+ */
+function roomLabels(rooms: Room[], scale: number, selId?: string): Map<string, string> {
+  const fs = 14 / scale;
+  const taken: { x: number; y: number; w: number }[] = [];
+  const out = new Map<string, string>();
+  const order = rooms
+    .map((r) => ({
+      r,
+      b: bbox(r.points),
+      p: roomLabelPoint(r.points),
+      k: r.id === selId ? Infinity : polygonArea(r.points),
+    }))
+    .sort((a, b) => b.k - a.k);
+  for (const { r, b, p } of order) {
+    const sel = r.id === selId;
+    if (!sel && b.maxY - b.minY < fs * 1.4) continue;
+    for (const text of sel ? [r.name] : [r.name, r.code].filter(Boolean)) {
+      const w = text.length * fs * 0.6;
+      if (!sel && w > (b.maxX - b.minX) * (text === r.name ? 1.6 : 1)) continue;
+      const x = p.anchor === 'start' ? p.x : p.x - w / 2;
+      if (!sel && taken.some((o) => x < o.x + o.w && x + w > o.x && Math.abs(p.y - o.y) < fs * 1.2)) continue;
+      taken.push({ x, y: p.y, w });
+      out.set(r.id, text);
+      break;
+    }
+  }
+  return out;
 }
 
 function EdgeLabels({ points, scale, color }: { points: Pt[]; scale: number; color: string }) {
@@ -529,6 +571,11 @@ export function PlanEditor({ mode = 'build' }: { mode?: SceneMode }) {
   const racksInteractive = !draw && (!build || step === 'racks' || step === 'cells' || step === 'mezzanine');
   const mezzInteractive = build && !draw && step === 'mezzanine';
   const selRoom = selection?.kind === 'room' ? w.rooms.find((r) => r.id === selection.id) : undefined;
+  const labels = roomLabels(
+    w.rooms.filter((r) => onFloor(r)),
+    view.scale,
+    selRoom?.id,
+  );
   const selZone = selection?.kind === 'zone' ? w.zones.find((z) => z.id === selection.id) : undefined;
   const selRackId =
     selection?.kind === 'rack' ? selection.id : selection?.kind === 'cell' ? selection.rackId : undefined;
@@ -799,18 +846,21 @@ export function PlanEditor({ mode = 'build' }: { mode?: SceneMode }) {
           {w.rooms.map((r) => {
             if (!onFloor(r)) return null;
             const p = roomLabelPoint(r.points);
+            const text = labels.get(r.id);
             return (
               <g key={r.id}>
-                <text
-                  x={p.x}
-                  y={p.y}
-                  fontSize={14 / view.scale}
-                  textAnchor={p.anchor}
-                  dominantBaseline="hanging"
-                  className="plan-room-label"
-                >
-                  {r.name}
-                </text>
+                {text && (
+                  <text
+                    x={p.x}
+                    y={p.y}
+                    fontSize={14 / view.scale}
+                    textAnchor={p.anchor}
+                    dominantBaseline="hanging"
+                    className="plan-room-label"
+                  >
+                    {text}
+                  </text>
+                )}
                 {(selRoom?.id === r.id || (build && step === 'rooms')) && (
                   <EdgeLabels
                     points={r.points}

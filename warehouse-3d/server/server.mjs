@@ -179,7 +179,7 @@ const isModel = (m) =>
   !!m &&
   typeof m === 'object' &&
   Array.isArray(m.warehouses) &&
-  ['tareTypes', 'consumers'].every((k) => m[k] === undefined || Array.isArray(m[k]));
+  ['tareTypes', 'consumers', 'seeds'].every((k) => m[k] === undefined || Array.isArray(m[k]));
 
 // ---------- Ответы ----------
 

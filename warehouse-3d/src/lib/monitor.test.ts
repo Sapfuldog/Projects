@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Product, Rack, Warehouse } from '../types';
-import { demoIT, demoMoscowShipyard, demoShipyard, emptyWarehouse, newZone, newRoom } from './demo';
+import {
+  demoIT,
+  demoMoscowShipyard,
+  demoShipyard,
+  emptyWarehouse,
+  newZone,
+  newRoom,
+  upgradeMoscowShipyard,
+} from './demo';
 import { bbox, polygonArea, polygonInside, selfIntersects } from './geometry';
 import { DEMO_CONSUMERS, DEMO_PRODUCTS } from './catalog';
 import { DEFAULT_TARE } from './materials';
@@ -409,12 +417,16 @@ describe('Московская верфь по карте', () => {
   const w = demoMoscowShipyard();
   const room = (code: string) => w.rooms.find((r) => r.code === code)!;
 
-  it('склад 74с2 — три этажа, первый 5 м; пристройки одноэтажные', () => {
+  it('склад 74с2 — три этажа по 4 м; пристройки одноэтажные', () => {
     expect(w.floors.map((f) => [f.elevation, f.height])).toEqual([
-      [0, 5],
-      [5, 4],
-      [9, 4],
+      [0, 4],
+      [4, 4],
+      [8, 4],
     ]);
+    // ничто на 1-м этаже склада не выше перекрытия
+    expect(room('С1').height).toBe(4);
+    expect(w.zones.every((z) => z.height < 4)).toBe(true);
+    expect(w.equipment.filter((e) => !e.name.startsWith('Цех')).every((e) => e.height <= 4)).toBe(true);
     const floorOf = (code: string) => w.floors.findIndex((f) => f.id === room(code).floorId) + 1;
     expect(['С1', 'С2', 'С3'].map(floorOf)).toEqual([1, 2, 3]);
     expect(['ЮП', 'ВП', 'ЗП'].map(floorOf)).toEqual([1, 1, 1]);
@@ -445,5 +457,36 @@ describe('Московская верфь по карте', () => {
     expect(gates.filter((g) => g.name.startsWith('Склад'))).toHaveLength(3);
     const m = monitorOf(w, undefined, DEMO_PRODUCTS, DEFAULT_TARE);
     expect(m.idx.cells).toHaveLength(0);
+  });
+
+  it('верфь первой версии (1-й этаж 5 м) переводится на этажи по 4 м, изменённая — не трогается', () => {
+    const old = demoMoscowShipyard();
+    const [f1, f2, f3] = old.floors;
+    f1.height = 5;
+    f2.elevation = 5;
+    f3.elevation = 9;
+    old.rooms.find((r) => r.code === 'С1')!.height = 5;
+    old.zones.find((z) => z.code === 'Х1')!.height = 4.5;
+    for (const e of old.equipment) if (e.type === 'wall') e.height = 5;
+    for (const e of old.equipment)
+      if (e.name === 'Склад: ворота восточные' || e.name === 'Склад: ворота внутренние') e.height = 4;
+    old.description = 'Нарисовано по Яндекс Картам: склад 74с2 (3 этажа, 1-й — 5 м) и производственный корпус.';
+    expect(upgradeMoscowShipyard(old)).toBe(true);
+    const fresh = demoMoscowShipyard();
+    const shape = (x: Warehouse) => ({
+      floors: x.floors.map((f) => [f.elevation, f.height]),
+      rooms: x.rooms.map((r) => r.height),
+      zones: x.zones.map((z) => z.height),
+      equipment: x.equipment.map((e) => e.height),
+      description: x.description,
+    });
+    expect(shape(old)).toEqual(shape(fresh));
+    // повторно и для объекта, где этажи уже поменяли сами, — ничего не делаем
+    expect(upgradeMoscowShipyard(old)).toBe(false);
+    const own = demoMoscowShipyard();
+    own.floors[0].height = 4.5;
+    own.floors[1].elevation = 4.5;
+    expect(upgradeMoscowShipyard(own)).toBe(false);
+    expect(upgradeMoscowShipyard(demoShipyard())).toBe(false);
   });
 });

@@ -791,6 +791,10 @@ export function demoShipyard(): Warehouse {
 
 // ---------- Московская верфь (по Яндекс Картам) ----------
 
+const MOSVERF_DESCRIPTION =
+  'Нарисовано по Яндекс Картам: склад 74с2 (3 этажа по 4 м) и производственный корпус. ' +
+  'Размеры сняты по масштабной линейке; уточнить можно в конструкторе.';
+
 /**
  * Московская верфь, Нагатинский затон: склад 74с2 и производственный корпус, нарисованные по снимкам
  * Яндекс Карт в масштабе линеек «30 м» и «10 м» (с поправкой на перспективу 3D-вида).
@@ -801,23 +805,21 @@ export function demoMoscowShipyard(): Warehouse {
   const w = emptyWarehouse('Московская верфь', 'physical');
   w.template = 'mosverf';
   w.address = 'Москва, Нагатинский затон';
-  w.description =
-    'Нарисовано по Яндекс Картам: склад 74с2 (3 этажа, 1-й — 5 м) и производственный корпус. ' +
-    'Размеры сняты по масштабной линейке; уточнить можно в конструкторе.';
+  w.description = MOSVERF_DESCRIPTION;
 
   // Метры от юго-западного угла цеха → план (север сверху)
   const at = (x: number, y: number): Pt => ({ x: Math.round((x + 110) * 10) / 10, y: Math.round((80 - y) * 10) / 10 });
   const poly = (...pts: [number, number][]) => pts.map(([x, y]) => at(x, y));
   const box = (x1: number, y1: number, x2: number, y2: number) => poly([x1, y1], [x2, y1], [x2, y2], [x1, y2]);
 
-  const f1: Floor = { id: uid('f'), name: '1 этаж', elevation: 0, height: 5 };
-  const f2: Floor = { id: uid('f'), name: '2 этаж', elevation: 5, height: 4 };
-  const f3: Floor = { id: uid('f'), name: '3 этаж', elevation: 9, height: 4 };
+  const f1: Floor = { id: uid('f'), name: '1 этаж', elevation: 0, height: 4 };
+  const f2: Floor = { id: uid('f'), name: '2 этаж', elevation: 4, height: 4 };
+  const f3: Floor = { id: uid('f'), name: '3 этаж', elevation: 8, height: 4 };
   w.floors = [f1, f2, f3];
 
   // ----- Склад 74с2: основной корпус (3 этажа) и одноэтажные пристройки -----
   const body = poly([-91, 42.7], [-35.6, 42.7], [-35.6, 58.7], [-50, 58.7], [-50, 63.2], [-91, 63.2]);
-  const s1 = mkRoom('Склад 74с2 · 1 этаж', 'С1', 'storage', body, 5, f1);
+  const s1 = mkRoom('Склад 74с2 · 1 этаж', 'С1', 'storage', body, 4, f1);
   const s2 = mkRoom(
     'Склад 74с2 · 2 этаж',
     'С2',
@@ -868,7 +870,7 @@ export function demoMoscowShipyard(): Warehouse {
       'Хранение · 1 этаж',
       'rack',
       body.map((p) => ({ ...p })),
-      4.5,
+      3.5,
     ),
     mkZone(
       s2,
@@ -897,8 +899,8 @@ export function demoMoscowShipyard(): Warehouse {
   };
   // Склад: двое ворот с противоположных сторон и одни внутри
   gate(-88, 33.5, 0, 'Склад: ворота западные', 4, 3.5);
-  gate(-35.6, 46.5, 90, 'Склад: ворота восточные', 4, 4);
-  gate(-50, 46.5, 90, 'Склад: ворота внутренние', 4, 4);
+  gate(-35.6, 46.5, 90, 'Склад: ворота восточные', 4, 3.5);
+  gate(-50, 46.5, 90, 'Склад: ворота внутренние', 4, 3.5);
   // Стена между основным корпусом и северо-восточной частью с проёмом под внутренние ворота
   for (const [y1, y2] of [
     [42.7, 44.5],
@@ -909,7 +911,7 @@ export function demoMoscowShipyard(): Warehouse {
       name: 'Стена внутри склада',
       length: Math.round((y2 - y1) * 10) / 10,
       width: 0.25,
-      height: 5,
+      height: 4,
     });
   }
   // Производственный корпус: двое ворот на западном фасаде — там, где на карте отмечены входы
@@ -917,6 +919,29 @@ export function demoMoscowShipyard(): Warehouse {
   gate(0, 26.6, 90, 'Цех: ворота 2 (южные)', 6, 6);
   w.equipment = eq;
   return w;
+}
+
+/**
+ * Верфь, добавленная первой версией шаблона (1-й этаж 5 м, отметки 0 / 5 / 9): если этажи не меняли —
+ * перевести склад 74с2 на этажи по 4 м. Возвращает true, если объект обновлён.
+ */
+export function upgradeMoscowShipyard(w: Warehouse): boolean {
+  if (w.template !== 'mosverf') return false;
+  const f = [...w.floors].sort((a, b) => a.elevation - b.elevation);
+  const first =
+    f.length === 3 && [0, 5, 9].every((e, i) => f[i].elevation === e) && [5, 4, 4].every((h, i) => f[i].height === h);
+  if (!first) return false;
+  f[0].height = 4;
+  f[1].elevation = 4;
+  f[2].elevation = 8;
+  for (const r of w.rooms) if (r.floorId === f[0].id && r.code === 'С1' && r.height === 5) r.height = 4;
+  for (const z of w.zones) if (z.code === 'Х1' && z.height === 4.5) z.height = 3.5;
+  for (const e of w.equipment) {
+    if (e.type === 'wall' && e.floorId === f[0].id && e.height === 5) e.height = 4;
+    if (e.type === 'gate' && e.name.startsWith('Склад:') && e.height === 4) e.height = 3.5;
+  }
+  if (w.description.includes('1-й — 5 м')) w.description = MOSVERF_DESCRIPTION;
+  return true;
 }
 
 // ---------- Демо: виртуальный IT-склад ----------

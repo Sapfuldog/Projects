@@ -14,7 +14,7 @@ import { VIOLATIONS } from '../../lib/control';
 import { timeAgo } from '../../lib/analytics';
 import { partyLabel, type Monitor } from '../../lib/monitor';
 import { searchCells } from '../../lib/search';
-import type { Cell, Product, Warehouse } from '../../types';
+import type { Cell, Product, RoomKind, Warehouse } from '../../types';
 import { sceneInfo, type SceneInfo } from './common';
 import { Ground, RoomsLayer, ZoneLimit, ZonesLayer } from './Structure';
 import { MezzaninesLayer, stairLane } from './Mezzanines';
@@ -35,6 +35,9 @@ function fitDir(dx: number, dz: number) {
   return new THREE.Vector3(0.5, 0.78, 0.72).normalize();
 }
 
+/** Помещения хранения: на них смотрит камера при открытии, цеха и офисы вокруг остаются фоном. */
+const STORE_KINDS = new Set<RoomKind>(['storage', 'yard', 'canopy']);
+
 /** Подгоняет камеру под объект, выполняет пресеты (изометрия, сверху, спереди) и плавные наведения. */
 function CameraRig({ w }: { w: Warehouse }) {
   const three = useThree();
@@ -51,13 +54,18 @@ function CameraRig({ w }: { w: Warehouse }) {
   const mountedAt = useRef(Date.now());
   const fresh = (at: number) => at > mountedAt.current - 2500;
 
-  /** Вид на весь объект или на выбранный этаж. */
+  /** Вид на склад (без цехов вокруг), на весь объект (whole) или на выбранный этаж. */
   const view = useCallback(
-    (dir: THREE.Vector3 | null, k = 0.5) => {
+    (dir: THREE.Vector3 | null, k = 0.5, whole = false) => {
       const info = sceneInfo(w, explode, floorFilter);
-      const rooms = floorFilter ? w.rooms.filter((r) => r.floorId === floorFilter) : [];
+      const stores = w.rooms.filter((r) => STORE_KINDS.has(r.kind));
+      const rooms = floorFilter
+        ? w.rooms.filter((r) => r.floorId === floorFilter)
+        : !whole && stores.length < w.rooms.length
+          ? stores
+          : [];
       const b = rooms.length ? bbox(rooms.flatMap((r) => r.points)) : warehouseBounds(w);
-      const y = rooms.length ? info.roomBase(rooms[0]) : 0;
+      const y = floorFilter && rooms.length ? info.roomBase(rooms[0]) : 0;
       const cx = (b.minX + b.maxX) / 2;
       const cz = (b.minY + b.maxY) / 2;
       const size = Math.max(b.maxX - b.minX, b.maxY - b.minY, 12);
@@ -100,7 +108,7 @@ function CameraRig({ w }: { w: Warehouse }) {
       fit: null,
     };
     useHover.getState().set(null);
-    anim.current = { ...view(dirs[preset.preset], preset.preset === 'top' ? 0.5 : 0.55), t: 0 };
+    anim.current = { ...view(dirs[preset.preset], preset.preset === 'top' ? 0.5 : 0.55, true), t: 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset, controls]);
 

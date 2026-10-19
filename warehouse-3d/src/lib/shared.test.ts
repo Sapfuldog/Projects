@@ -25,12 +25,19 @@ describe('общая модель с сервера при запуске', () =
     });
     const merged = JSON.parse(mergeRemote(old, remote(model), 3)!);
     expect(merged.version).toBe(3);
-    expect(merged.state).toEqual({ theme: 'dark', user: { name: 'Кладовщик' }, ...model });
+    expect(merged.state).toEqual({ theme: 'dark', user: { name: 'Кладовщик' }, ...model, seeds: [] });
   });
 
   it('первый вход: в браузере пусто или повреждено', () => {
     expect(JSON.parse(mergeRemote(null, remote(model), 3)!).state.warehouses).toEqual([{ id: 'w-srv' }]);
     expect(JSON.parse(mergeRemote('{испорчено', remote(model), 3)!).state.consumers).toEqual([]);
+  });
+
+  it('отметки о готовых объектах — с сервера; у модели прежней версии их нет, и объект добавится в неё один раз', () => {
+    const local = JSON.stringify({ state: { warehouses: [{ id: 'w-local' }], seeds: ['mosverf'] }, version: 3 });
+    expect(JSON.parse(mergeRemote(local, remote(model), 3)!).state.seeds).toEqual([]);
+    const withSeeds = { ...model, seeds: ['mosverf'] };
+    expect(JSON.parse(mergeRemote(null, remote(withSeeds), 3)!).state.seeds).toEqual(['mosverf']);
   });
 
   it('на сервере ещё пусто — остаётся то, что в браузере', () => {

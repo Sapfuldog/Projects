@@ -1,9 +1,9 @@
 // Общие данные на сервере компании (server/server.mjs): структура складов, подключение к учётной системе,
-// справочники тары и кладовых — одни для всех сотрудников. Срезы остатков, справочник ТМЦ из учётной системы
+// справочники тары и кладовых, отметки о добавленных готовых объектах — одни для всех сотрудников. Срезы остатков, справочник ТМЦ из учётной системы
 // и настройки вида у каждого пользователя свои (в браузере). Без сервера приложение работает как раньше.
 import { create } from 'zustand';
 
-export const SHARED_KEYS = ['warehouses', 'tareTypes', 'consumers'] as const;
+export const SHARED_KEYS = ['warehouses', 'tareTypes', 'consumers', 'seeds'] as const;
 export type SharedModel = Record<(typeof SHARED_KEYS)[number], unknown>;
 
 export type ServerState = 'local' | 'saved' | 'saving' | 'offline' | 'password';
@@ -62,6 +62,8 @@ const pick = (s: Partial<Record<string, unknown>>): SharedModel => ({
   warehouses: s.warehouses,
   tareTypes: s.tareTypes,
   consumers: s.consumers,
+  // у модели прежней версии отметок нет — это то же, что пустой список (иначе лишняя запись при каждом входе)
+  seeds: s.seeds ?? [],
 });
 
 const isRemote = (j: unknown): j is Remote =>
@@ -113,6 +115,8 @@ export function mergeRemote(local: string | null, remote: Remote, version: numbe
   if (!parsed.state || (parsed.version ?? 0) < version)
     parsed.state = { theme: parsed.state?.theme, user: parsed.state?.user };
   for (const k of SHARED_KEYS) if (remote.model[k] !== undefined) parsed.state[k] = remote.model[k];
+  // Модель прежней версии сервера без отметок: новые готовые объекты добавятся в неё один раз
+  if (remote.model.seeds === undefined) parsed.state.seeds = [];
   return JSON.stringify({ ...parsed, version });
 }
 

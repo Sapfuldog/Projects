@@ -42,6 +42,7 @@ import {
   newRoom,
   newZone,
   uid,
+  upgradeMoscowShipyard,
 } from './lib/demo';
 import { pointInPolygon, polygonCentroid } from './lib/geometry';
 import { newEquipment } from './lib/equipment';
@@ -164,7 +165,7 @@ interface State {
   placing: EquipmentType | null;
   toasts: Toast[];
   notifSeenAt: number;
-  /** Объекты-шаблоны, уже добавленные в этот браузер при обновлении приложения */
+  /** Готовые объекты-шаблоны, уже добавленные при обновлении приложения (в браузере или в общей модели сервера) */
   seeds: string[];
   user: User;
   openProductId: string | null;
@@ -1070,7 +1071,8 @@ export const useStore = create<Store>()(
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<State>;
-        return { ...current, ...p, show: { ...DEFAULT_SHOW, ...(p.show ?? {}) } };
+        // Отметки о шаблонах — только из сохранённого: в сохранении прежней версии их нет, и новые объекты добавятся
+        return { ...current, ...p, show: { ...DEFAULT_SHOW, ...(p.show ?? {}) }, seeds: p.seeds ?? [] };
       },
       onRehydrateStorage: () => () => {
         finishHydration();
@@ -1080,12 +1082,11 @@ export const useStore = create<Store>()(
   ),
 );
 
-/** Шаблоны, которые один раз добавляются при обновлении приложения */
+/** Готовые объекты, которые один раз добавляются при обновлении приложения */
 const SEEDS = ['mosverf'] as const;
 
 function finishHydration() {
   const s = useStore.getState();
-  if (s.hydrated) return;
   if (!s.warehouses.length) {
     // Первый запуск: Московская верфь по карте, демо-склад завода и виртуальный IT-склад
     const id = s.createWarehouse('mosverf');
@@ -1094,18 +1095,34 @@ function finishHydration() {
     useStore.getState().setCurrent(id);
     useStore.setState({ seeds: [...SEEDS] });
   } else if (!s.warehouses.some((w) => w.id === s.currentId)) s.setCurrent(s.warehouses[0].id);
-  // Новый шаблон в обновлении: в этом браузере — добавить и открыть один раз. На сервере компании общую
-  // модель не трогаем, чтобы не вернуть удалённое и не задвоить: там объект добавляют кнопкой в «Объектах».
-  for (const t of SEEDS) {
-    const st = useStore.getState();
-    if ((st.seeds ?? []).includes(t)) continue;
-    if (useServer.getState().mode === 'local' && !st.warehouses.some((w) => w.template === t))
-      st.setCurrent(st.createWarehouse(t));
-    useStore.setState((x) => ({ seeds: [...(x.seeds ?? []), t] }));
-  }
+  // Хранилище браузера могло ответить позже запуска с демо-данными: шаблоны добавляются и к прочитанному позже
+  seedTemplates();
   ensureDemoInventory();
   useStore.setState({ hydrated: true, past: [], future: [] });
 }
+
+/**
+ * Новый шаблон в обновлении — добавить и открыть один раз; объекты прежней версии шаблона — обновить.
+ * Отметка о добавлении хранится вместе со складами (в браузере или в общей модели сервера), поэтому
+ * удалённый объект не вернётся и на других рабочих местах не задвоится. На сервере с паролем редактора
+ * общую модель меняет только тот, чей пароль подтверждён.
+ */
+function seedTemplates() {
+  const srv = useServer.getState();
+  if (srv.mode === 'server' && !srv.canEdit) return;
+  for (const t of SEEDS) {
+    const st = useStore.getState();
+    if ((st.seeds ?? []).includes(t)) continue;
+    if (!st.warehouses.some((w) => w.template === t)) st.setCurrent(st.createWarehouse(t));
+    useStore.setState((x) => ({ seeds: [...(x.seeds ?? []), t] }));
+  }
+  useStore.setState((x) => void x.warehouses.forEach(upgradeMoscowShipyard));
+}
+
+// Пароль редактора подтвердился уже после запуска — добавить новые готовые объекты в общую модель
+useServer.subscribe((s, prev) => {
+  if (s.canEdit && !prev.canEdit && useStore.getState().hydrated) seedTemplates();
+});
 
 /** Склад на демо-потоке без среза (например, общая модель с сервера у нового пользователя) — построить демо-срез. */
 function ensureDemoInventory() {
@@ -1118,13 +1135,14 @@ function startSharedSync() {
   startSync({
     read: () => {
       const s = useStore.getState();
-      return { warehouses: s.warehouses, tareTypes: s.tareTypes, consumers: s.consumers };
+      return { warehouses: s.warehouses, tareTypes: s.tareTypes, consumers: s.consumers, seeds: s.seeds };
     },
     apply: (m) => {
       useStore.setState((s) => {
         if (Array.isArray(m.warehouses)) s.warehouses = m.warehouses as Warehouse[];
         if (Array.isArray(m.tareTypes)) s.tareTypes = m.tareTypes as TareType[];
         if (Array.isArray(m.consumers)) s.consumers = m.consumers as Consumer[];
+        if (Array.isArray(m.seeds)) s.seeds = m.seeds as string[];
         s.past = [];
         s.future = [];
         if (!s.warehouses.some((w) => w.id === s.currentId)) s.currentId = s.warehouses[0]?.id ?? null;
@@ -1133,7 +1151,13 @@ function startSharedSync() {
     },
     subscribe: (fn) =>
       useStore.subscribe((s, prev) => {
-        if (s.warehouses !== prev.warehouses || s.tareTypes !== prev.tareTypes || s.consumers !== prev.consumers) fn();
+        if (
+          s.warehouses !== prev.warehouses ||
+          s.tareTypes !== prev.tareTypes ||
+          s.consumers !== prev.consumers ||
+          s.seeds !== prev.seeds
+        )
+          fn();
       }),
     notify: (text, kind) => useStore.getState().toast(text, kind),
   });
@@ -1141,7 +1165,7 @@ function startSharedSync() {
 
 // Если хранилище браузера недоступно или зависло (встроенные окна, приватный режим) —
 // запускаемся с демо-данными, не дожидаясь его.
-if (typeof window !== 'undefined') setTimeout(finishHydration, 4000);
+if (typeof window !== 'undefined') setTimeout(() => !useStore.getState().hydrated && finishHydration(), 4000);
 
 /** Текущий склад (или undefined). */
 export const useWarehouse = () => useStore((s) => s.warehouses.find((w) => w.id === s.currentId));

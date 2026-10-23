@@ -1,10 +1,12 @@
-// Готовый пакет для сервера без доступа к npm: собранное приложение, сервер, скрипты установки, Docker.
-//   npm run release   → release/sklad-3d-<версия>/ и архив release/sklad-3d-<версия>.tar.gz
+// Готовый пакет для сервера без доступа к npm: собранное приложение, сервер, кнопки запуска и обновления
+// для Windows, скрипты установки, Docker.
+//   npm run release   → release/sklad-3d-<версия>/ и архивы release/sklad-3d-<версия>.zip и .tar.gz
 // На сервере нужен только Node.js 18+ (или Docker с образом Node.js) — зависимостей нет.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { zipDir } from '../deploy/lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -18,8 +20,35 @@ if (!fs.existsSync(path.join(root, 'dist', 'index.html'))) {
 }
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
-const copy = (rel) => fs.cpSync(path.join(root, rel), path.join(out, rel), { recursive: true });
+const copy = (rel) =>
+  fs.cpSync(path.join(root, rel), path.join(out, rel), {
+    recursive: true,
+    filter: (src) => !/\.test\.mjs$/.test(src),
+  });
 for (const rel of ['dist', 'server/server.mjs', 'deploy', 'sklad-3d.env.example', 'DEPLOY.md']) copy(rel);
+
+// Кнопки в корне пакета: без call — cmd не вернётся в этот файл, даже если обновление его заменит
+const crlf = (text) => text.replace(/\n/g, '\r\n');
+fs.writeFileSync(path.join(out, 'Запустить Склад 3D.cmd'), crlf('@"%~dp0deploy\\windows\\start.cmd" %*\n'));
+fs.writeFileSync(path.join(out, 'Обновить Склад 3D.cmd'), crlf('@"%~dp0deploy\\windows\\update.cmd" %*\n'));
+
+// Какая версия собрана: «Обновить Склад 3D» сравнивает коммит с последним в ветке
+const git = (...args) => {
+  try {
+    return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return '';
+  }
+};
+const commit = process.env.SKLAD3D_COMMIT || git('rev-parse', 'HEAD');
+const branch = process.env.SKLAD3D_BRANCH || git('rev-parse', '--abbrev-ref', 'HEAD');
+const built = new Date().toISOString().replace('T', ' ').slice(0, 16);
+fs.writeFileSync(
+  path.join(out, 'version.txt'),
+  `\ufeff${crlf(
+    `Склад 3D ${pkg.version}\nКоммит: ${commit || 'неизвестен'}\n${branch ? `Ветка: ${branch}\n` : ''}Собрано: ${built} UTC\n`,
+  )}`,
+);
 
 fs.writeFileSync(
   path.join(out, 'package.json'),
@@ -59,20 +88,26 @@ CMD ["node", "server/server.mjs"]
 `,
 );
 // Памятка для Windows: Блокнот, CRLF, UTF-8 с BOM
-const START = `Склад 3D — готовый пакет (версия ${pkg.version})
+const START = `Склад 3D — готовый пакет (версия ${pkg.version}${commit ? `, ${commit.slice(0, 7)}` : ''})
 
-1. Установите Node.js LTS: https://nodejs.org (или из пакета программ компании).
+1. Нужен Node.js 18 или новее (рекомендуется 22 LTS): https://nodejs.org или пакет программ компании.
+   Подойдёт и распакованный архив node-v…-win-x64 в папке пользователя — кнопки найдут его сами.
 
-2. Запуск на этом компьютере: дважды щёлкните deploy\\windows\\start.cmd
-   и откройте в браузере http://localhost:8080. Окно не закрывайте — это сервер.
+2. Запуск — дважды щёлкните «Запустить Склад 3D».
+   Откроется браузер со Складом 3D, а на рабочем столе появится ярлык «Склад 3D».
+   Окно с текстом — это сервер: пока оно открыто, Склад 3D работает, в том числе у коллег по сети
+   (http://<адрес этого компьютера>:8080). Закроете окно — Склад 3D остановится.
+   Если брандмауэр Windows спросит про Node.js — разрешите для частных сетей, иначе коллеги не откроют.
 
-3. Чтобы сервер запускался сам и коллеги открывали его по сети:
-   PowerShell от имени администратора, в этой папке:
+3. Новая версия — дважды щёлкните «Обновить Склад 3D».
+   Скачается и соберётся последняя версия (нужен интернет: GitHub и npm), сервер перезапустится.
+   Склады (папка data) и настройки (sklad-3d.env) сохраняются.
+
+4. Чтобы сервер работал всегда, даже без входа в Windows, — PowerShell от имени администратора в этой папке:
      powershell -ExecutionPolicy Bypass -File .\\deploy\\windows\\install.ps1
-   Коллеги открывают http://<адрес этого компьютера>:8080
 
-Если Windows не даёт запустить файл из скачанного архива: «Свойства» архива →
-«Разблокировать», затем распакуйте заново.
+Если Windows не даёт запустить файлы из скачанного архива: «Свойства» архива → «Разблокировать»,
+затем распакуйте заново.
 
 Linux: sudo ./deploy/linux/install.sh      Docker: docker compose up -d --build
 Подробно — DEPLOY.md.
@@ -82,9 +117,11 @@ fs.writeFileSync(path.join(out, 'Как запустить.txt'), `\ufeff${START
 const compose = fs.readFileSync(path.join(root, 'docker-compose.yml'), 'utf8').replace(/^\s*NPM_REGISTRY:.*\n/m, '');
 fs.writeFileSync(path.join(out, 'docker-compose.yml'), compose);
 
+// zip — для Windows (открывается проводником), tar.gz — для Linux
+fs.writeFileSync(path.join(releaseDir, `${name}.zip`), zipDir(out, name, commit));
 try {
   execFileSync('tar', ['-czf', `${name}.tar.gz`, name], { cwd: releaseDir, stdio: 'ignore' });
-  console.log(`Готово: release/${name}/ и архив release/${name}.tar.gz`);
+  console.log(`Готово: release/${name}/ и архивы release/${name}.zip, release/${name}.tar.gz`);
 } catch {
-  console.log(`Готово: release/${name}/ (tar не найден — заархивируйте папку вручную)`);
+  console.log(`Готово: release/${name}/ и архив release/${name}.zip (tar не найден)`);
 }

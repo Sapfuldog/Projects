@@ -133,7 +133,7 @@ npm run dev:lan      # то же, но доступно с других комп
 npm test             # юнит-тесты: ячейки, места, нагрузки, контроль, импорт среза, поиск, сервер
 npm run build        # сборка в dist/
 npm start            # сервер компании: dist/ на 0.0.0.0:8080 + общая модель складов
-npm run release      # готовый пакет для сервера без интернета: release/sklad-3d-<версия>.tar.gz
+npm run release      # готовый пакет: release/sklad-3d-<версия>.zip (Windows, с кнопками) и .tar.gz
 npm run build:single # всё приложение одним HTML-файлом в dist-single/
 npm run mock-wms     # тестовая учётная система для проверки REST (http://localhost:8787)
 ```
@@ -153,7 +153,9 @@ npm run mock-wms     # тестовая учётная система для п�
 
 - **Docker:** `docker compose up -d --build`.
 - **Linux:** служба systemd — `sudo ./deploy/linux/install.sh`.
-- **Windows:** автозапуск и правило брандмауэра — `deploy\windows\install.ps1`.
+- **Windows:** кнопки «Запустить Склад 3D» (сервер и браузер, ярлык на рабочем столе) и «Обновить Склад 3D»
+  (новая версия с GitHub, склады и настройки сохраняются) в готовом пакете; автозапуск и правило
+  брандмауэра — `deploy\windows\install.ps1`.
 - **Сеть без интернета:** пакет `npm run release`; на сервере нужен только Node.js.
 
 Пошагово, с настройками, резервными копиями и разбором неполадок — в [DEPLOY.md](DEPLOY.md).
@@ -169,6 +171,7 @@ npm run mock-wms     # тестовая учётная система для п�
 - `src/lib/shared.ts` — общая модель на сервере компании: загрузка, сохранение, чужие изменения, пароль редактора.
 - `src/lib/search.ts` — поиск по адресу, ТМЦ, артикулу, партии, плавке.
 - `server/server.mjs` — сервер компании: раздача приложения, общая модель с версиями и копиями, прокси к учётной системе.
+- `deploy/launch.mjs`, `deploy/update.mjs`, `deploy/windows/*.cmd` — кнопки «Запустить» и «Обновить» для Windows.
 - `deploy/` — служба systemd и скрипты установки для Linux и Windows; `Dockerfile`, `docker-compose.yml`.
 - `src/lib/demo.ts`, `src/lib/demoData.ts`, `src/lib/catalog.ts` — демо-объекты, справочник ТМЦ и имитация учётной системы.
 - `src/components/scene` — 3D (three.js, react-three-fiber): тысячи ячеек и грузов instanced-мешами, тени, этажи, мезонины.

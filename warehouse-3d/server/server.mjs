@@ -21,6 +21,7 @@
 //   ERP_CACHE_SEC=5         сколько секунд отдавать один и тот же ответ учётной системы всем пользователям
 //   BACKUPS=30              сколько резервных копий модели хранить
 //   LOG=1                   журнал запросов к API в консоль (0 — выключить)
+//   OPEN_BROWSER=0          открыть приложение в браузере после запуска (ключ --open; кнопка «Запустить Склад 3D»)
 
 import http from 'node:http';
 import https from 'node:https';
@@ -29,6 +30,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { spawn } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -48,6 +50,7 @@ const DEFAULTS = {
   BACKUPS: '30',
   MAX_BODY_MB: '50',
   LOG: '1',
+  OPEN_BROWSER: '0',
 };
 
 const ARGS = {
@@ -92,6 +95,10 @@ export function loadConfig(argv = process.argv.slice(2), env = process.env) {
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].indexOf('=');
     const flag = eq > 0 ? argv[i].slice(0, eq) : argv[i];
+    if (flag === '--open') {
+      cli.OPEN_BROWSER = '1';
+      continue;
+    }
     if (!ARGS[flag]) continue;
     cli[ARGS[flag]] = eq > 0 ? argv[i].slice(eq + 1) : argv[++i];
   }
@@ -117,6 +124,7 @@ export function loadConfig(argv = process.argv.slice(2), env = process.env) {
     backups: Math.max(1, Number(c.BACKUPS) || 30),
     maxBody: (Number(c.MAX_BODY_MB) || 50) * 1024 * 1024,
     log: c.LOG !== '0',
+    open: c.OPEN_BROWSER === '1',
     envFile,
   };
 }
@@ -441,6 +449,8 @@ export function createApp(cfg, store) {
           version: pkg.version,
           model: store.meta,
           uptime: Math.round(process.uptime()),
+          // номер процесса: кнопка «Обновить Склад 3D» останавливает по нему запущенный сервер
+          pid: process.pid,
         });
       if (pathname.startsWith('/api/')) return await api(req, res, pathname);
       if (pathname === '/erp' || pathname.startsWith('/erp/')) return await proxyErp(req, res, cfg, erpCache);
@@ -461,6 +471,24 @@ export function lanUrls(host, port) {
   for (const list of Object.values(os.networkInterfaces()))
     for (const a of list ?? []) if (a.family === 'IPv4' && !a.internal) out.push(`http://${a.address}:${port}`);
   return out;
+}
+
+/** Открыть адрес в браузере по умолчанию. */
+export function openBrowser(url) {
+  const [cmd, args] =
+    process.platform === 'win32'
+      ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
+      : process.platform === 'darwin'
+        ? ['open', [url]]
+        : ['xdg-open', [url]];
+  const manual = () => console.log(`Откройте в браузере: ${url}`);
+  try {
+    const p = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+    p.on('error', manual);
+    p.unref();
+  } catch {
+    manual();
+  }
 }
 
 async function main() {
@@ -490,6 +518,10 @@ async function main() {
         (cfg.editPassword ? ' · изменения по паролю редактора' : '') +
         (cfg.erpUrl ? ` · учётная система: ${cfg.erpUrl} → /erp` : ''),
     );
+    if (cfg.open) {
+      const local = ['0.0.0.0', '::'].includes(cfg.host) ? 'localhost' : cfg.host;
+      openBrowser(`http://${local}:${cfg.port}/`);
+    }
   });
   const stop = () => {
     server.close(() => process.exit(0));

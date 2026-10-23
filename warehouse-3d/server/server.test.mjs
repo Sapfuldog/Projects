@@ -83,6 +83,8 @@ describe('раздача приложения', () => {
     const h = await (await fetch(`${base}/healthz`)).json();
     expect(h.ok).toBe(true);
     expect(h.model.version).toBe(0);
+    // по номеру процесса «Обновить Склад 3D» останавливает запущенный сервер
+    expect(h.pid).toBe(process.pid);
   });
 });
 
@@ -204,6 +206,9 @@ describe('настройки сервера', () => {
     const cli = loadConfig(['--port', '80', '--host=0.0.0.0', '--data', dir], { ENV_FILE: file, PORT: '8081' });
     expect([cli.host, cli.port, cli.dataDir]).toEqual(['0.0.0.0', 80, dir]);
     expect(() => loadConfig(['--port', 'восемь'], { ENV_FILE: file })).toThrow(/PORT/);
+    // --open без значения: браузер после запуска, следующий ключ не съедается
+    const open = loadConfig(['--open', '--port', '9100'], { ENV_FILE: file });
+    expect([open.open, open.port, def.open]).toEqual([true, 9100, false]);
     expect(parseEnvFile('A=1\n  B = два \n#C=3\nbad line')).toEqual({ A: '1', B: 'два' });
   });
 });

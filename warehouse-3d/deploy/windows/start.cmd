@@ -1,9 +1,18 @@
 @echo off
 chcp 65001 > nul
-rem Запуск «Склад 3D» вручную (окно должно оставаться открытым). Для автозапуска — install.ps1.
-rem Порт и другие настройки — в sklad-3d.env рядом с package.json или ключами: start.cmd --port 9000
+title Склад 3D
+rem Кнопка «Запустить Склад 3D»: сервер (все сетевые интерфейсы, порт из sklad-3d.env, по умолчанию 8080)
+rem и браузер. Это окно — сервер: закроете его — Склад 3D остановится. Уже запущен — просто откроется браузер.
+rem Ключи передаются серверу, например: start.cmd --port 9000
 cd /d "%~dp0..\.."
-where node > nul 2> nul || (echo Не найден Node.js 18+. Установите его и запустите снова. & pause & exit /b 1)
-if not exist dist\index.html (echo Нет сборки dist. Выполните npm run build. & pause & exit /b 1)
-node server\server.mjs --host 0.0.0.0 %*
-pause
+call "%~dp0find-node.cmd"
+if errorlevel 1 (
+  pause
+  exit /b 1
+)
+rem Дальше — один блок: при обновлении этот файл заменяется, а cmd дочитывает файл по старому смещению
+(
+  "%NODE%" deploy\launch.mjs %*
+  if errorlevel 1 pause
+  exit /b
+)

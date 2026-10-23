@@ -139,6 +139,23 @@ function CameraRig({ w }: { w: Warehouse }) {
   return null;
 }
 
+/**
+ * Ближняя плоскость камеры — по расстоянию до цели. С постоянной 0,5 м точность глубины в 600 м от камеры —
+ * около 4 см, и полы мерцают с землёй и заливкой зон; отодвинутая плоскость возвращает миллиметры.
+ */
+function DepthRange() {
+  useFrame(({ camera, controls }) => {
+    const c = controls as OrbitControlsImpl | null;
+    if (!c || !(camera instanceof THREE.PerspectiveCamera)) return;
+    const near = Math.max(0.5, camera.position.distanceTo(c.target) * 0.01);
+    if (Math.abs(near - camera.near) > camera.near * 0.05) {
+      camera.near = near;
+      camera.updateProjectionMatrix();
+    }
+  });
+  return null;
+}
+
 /** Срез по высоте: общая плоскость отсечения для всей сцены. */
 function Clipper({ clip }: { clip: number | null }) {
   const gl = useThree((s) => s.gl);
@@ -601,6 +618,7 @@ export function Scene3D({ mode = 'monitor' }: { mode?: SceneMode }) {
           maxDistance={Math.max(900, span * 3)}
         />
         <CameraRig w={w} />
+        <DepthRange />
         <Clipper clip={clip} />
         <Ground bounds={bounds} dark={dark} />
         <RoomsLayer

@@ -68,13 +68,29 @@ export function Ground({
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cz = (bounds.minY + bounds.maxY) / 2;
   const size = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) + 400;
+  // Земля и сетка — нижний слой: смещены по глубине назад, иначе издалека (верфь, «Весь объект») они
+  // просвечивают сквозь полы — до них всего пара сантиметров, а точность глубины там — сантиметры
+  const behindFloors = (grid: THREE.Mesh | null) => {
+    if (!grid) return;
+    const m = grid.material as THREE.Material;
+    m.polygonOffset = true;
+    m.polygonOffsetFactor = 2;
+    m.polygonOffsetUnits = 8;
+  };
   return (
     <>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} receiveShadow raycast={noRaycast}>
         <planeGeometry args={[size, size]} />
-        <meshToonMaterial color={dark ? '#1b2638' : '#dde5d3'} gradientMap={toonGradient()} />
+        <meshToonMaterial
+          color={dark ? '#1b2638' : '#dde5d3'}
+          gradientMap={toonGradient()}
+          polygonOffset
+          polygonOffsetFactor={4}
+          polygonOffsetUnits={16}
+        />
       </mesh>
       <Grid
+        ref={behindFloors}
         position={[cx, -0.01, cz]}
         args={[size, size]}
         cellSize={1}
@@ -376,6 +392,7 @@ function ZonePaint({
         depthWrite={false}
         polygonOffset
         polygonOffsetFactor={-1}
+        polygonOffsetUnits={-4}
       />
     </mesh>
   );

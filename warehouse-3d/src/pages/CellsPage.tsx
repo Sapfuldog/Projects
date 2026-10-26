@@ -474,6 +474,9 @@ export function CellsPage() {
                         <i className="lg reserved" /> закреплена за кладовой
                       </span>
                       <span>
+                        <i className="lg merged" /> объединённая
+                      </span>
+                      <span>
                         <i className="lg crit" /> нарушение
                       </span>
                       {found && (

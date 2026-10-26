@@ -405,6 +405,7 @@ export function snapshotRows(
 /** Структура мест хранения для выгрузки в учётную систему (адреса, типы, размеры, нагрузки). */
 export function structurePayload(w: Warehouse, cells: Cell[]) {
   const rackById = new Map(w.racks.map((r) => [r.id, r]));
+  const address = new Map(cells.map((c) => [c.key, c.address]));
   return {
     warehouse: { id: w.id, name: w.name, kind: w.kind, address: w.address },
     generatedAt: new Date().toISOString(),
@@ -426,6 +427,8 @@ export function structurePayload(w: Warehouse, cells: Cell[]) {
         maxLoad: c.maxLoad,
         places: c.places,
         blocked: c.blocked,
+        // объединённые ячейки: основная — с новыми размерами, вошедшие — заблокированы и ссылаются на неё
+        mergedWith: c.mergedInto ? address.get(c.mergedInto) : undefined,
         reservedFor: c.reservedFor,
         hazard: c.hazard,
         name: c.virtual ? c.note : undefined,

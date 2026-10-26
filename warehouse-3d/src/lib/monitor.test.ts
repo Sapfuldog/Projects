@@ -12,7 +12,17 @@ import {
 import { bbox, polygonArea, polygonInside, selfIntersects } from './geometry';
 import { DEMO_CONSUMERS, DEMO_PRODUCTS } from './catalog';
 import { DEFAULT_TARE } from './materials';
-import { buildCells, defaultPlaces, rackCells, rackContext, rackHeight, rackWarnings, tierBases } from './rack';
+import {
+  buildCells,
+  defaultPlaces,
+  mergePlan,
+  rackCells,
+  rackContext,
+  rackFrame,
+  rackHeight,
+  rackWarnings,
+  tierBases,
+} from './rack';
 import {
   batchStock,
   cellFill,
@@ -63,6 +73,71 @@ function smallWarehouse(rack: Partial<Rack>): { w: Warehouse; r: Rack } {
   w.racks = [r];
   return { w, r };
 }
+
+describe('объединение ячеек', () => {
+  const at = (cells: ReturnType<typeof rackCells>, key: string) => cells.find((c) => c.key === `r1:${key}`)!;
+
+  it('две ячейки в одну по ширине: размеры, места и нагрузка пересчитаны, соседняя заблокирована', () => {
+    const { w, r } = smallWarehouse({});
+    const plain = rackCells(w, r);
+    r.overrides['1.1.1'] = { mergeRight: 1 };
+    const cells = rackCells(w, r);
+    expect(cells).toHaveLength(12);
+    const main = at(cells, '1.1.1');
+    expect([main.width, main.depth, main.height, main.places, main.maxLoad]).toEqual([1800, 1100, 1500, 2, 2000]);
+    expect(main.merged).toEqual({ right: 1, up: 0 });
+    expect(main.blocked).toBe(false);
+    // центр — посередине между двумя прежними ячейками
+    expect(main.cx).toBeCloseTo((at(plain, '1.1.1').cx + at(plain, '1.1.2').cx) / 2, 6);
+    const part = at(cells, '1.1.2');
+    expect([part.blocked, part.mergedInto, part.note]).toEqual([true, main.key, `Объединена с ${main.address}`]);
+    expect(at(cells, '1.1.3').blocked).toBe(false);
+  });
+
+  it('вся секция на два яруса: балка снята, высота — с бывшей балкой', () => {
+    const { w, r } = smallWarehouse({});
+    const beams = rackFrame(r).beams.length;
+    r.overrides['2.1.1'] = { mergeRight: 2, mergeUp: 1, note: 'высокий груз' };
+    const cells = rackCells(w, r);
+    const main = at(cells, '2.1.1');
+    expect([main.width, main.height, main.places]).toEqual([2700, 1500 + 120 + 1500, 3]);
+    expect(main.note).toBe('высокий груз');
+    expect(cells.filter((c) => c.mergedInto === main.key)).toHaveLength(5);
+    expect(mergePlan(r).noBeam).toEqual(new Set(['2.2']));
+    expect(rackFrame(r).beams.length).toBe(beams - 2); // передняя и задняя балки 2-го яруса секции 2
+    const m = monitorOf(w, undefined, DEMO_PRODUCTS, DEFAULT_TARE);
+    expect(m.stats.all.blocked).toBe(5);
+  });
+
+  it('пересечения, другое деление ярусов и консоли — не объединяются, с понятным предупреждением', () => {
+    const { w, r } = smallWarehouse({});
+    r.overrides['1.1.1'] = { mergeRight: 1 };
+    r.overrides['1.1.2'] = { mergeUp: 1 };
+    expect(at(rackCells(w, r), '1.1.2').mergedInto).toBe('r1:1.1.1');
+    expect(rackWarnings(w, r).join(' ')).toMatch(/секция 1, ярус 1, место 2\) пересекается/);
+
+    const other = smallWarehouse({
+      tiers: [
+        { height: 1500, cells: 3, maxLoad: 1000 },
+        { height: 1500, cells: 2, maxLoad: 1000 },
+      ],
+    });
+    other.r.overrides['1.1.1'] = { mergeUp: 1 };
+    expect(at(rackCells(other.w, other.r), '1.1.1').merged).toBeUndefined();
+    expect(mergePlan(other.r).problems[0]).toMatch(/другое число ячеек/);
+
+    const cant = smallWarehouse({
+      kind: 'cantilever',
+      sections: 1,
+      sectionLength: 6000,
+      depth: 1000,
+      doubleSided: true,
+      tiers: [{ height: 650, cells: 2, maxLoad: 2000 }],
+    });
+    cant.r.overrides['1.1.1'] = { mergeRight: 1 };
+    expect(rackCells(cant.w, cant.r).every((c) => !c.merged && !c.mergedInto)).toBe(true);
+  });
+});
 
 describe('ячейки стеллажа: Ш×Г×В, тип, места', () => {
   it('паллетный стеллаж: Ш = секция / ячейки, Г = глубина, одно паллетоместо', () => {

@@ -726,6 +726,10 @@ export function demoShipyard(): Warehouse {
   const a3 = racks.find((r) => r.code === 'А3')!;
   a3.overrides['6.2.2'] = { blocked: true, note: 'Повреждена балка — заявка на ремонт' };
   a3.overrides['6.2.3'] = { blocked: true, note: 'Повреждена балка — заявка на ремонт' };
+  // Объединённые ячейки: место под длинные ящики (2 места в одну) и высокий груз (снята балка 2-го яруса)
+  const a7 = racks.find((r) => r.code === 'А7')!;
+  a7.overrides['2.1.1'] = { mergeRight: 1, note: 'Под длинные ящики до 1,7 м' };
+  a7.overrides['9.1.1'] = { mergeRight: 2, mergeUp: 1, note: 'Снята балка 2-го яруса: груз до 3,3 м' };
   w.racks = racks;
 
   // ----- Оборудование и окружение -----

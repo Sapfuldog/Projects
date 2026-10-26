@@ -89,6 +89,11 @@ export function CellDetails({ cell, compact = false }: { cell: Cell; compact?: b
       </div>
       <div className="cc-badges">
         {cell.blocked && <span className="badge bad">Заблокирована{cell.note ? `: ${cell.note}` : ''}</span>}
+        {cell.merged && (
+          <span className="badge merged" title="Ячейка объединена с соседними: места по ширине × ярусы по высоте">
+            Объединённая: {cell.merged.right + 1} × {cell.merged.up + 1}
+          </span>
+        )}
         {reserved && <span className="badge info">Закреплена за {reserved.code}</span>}
         {cell.hazard && <span className="badge warn">Зона ЛВЖ</span>}
         {ctx?.mezz && <span className="badge">Мезонин, уровень {(rack?.deck ?? 1) + 1}</span>}

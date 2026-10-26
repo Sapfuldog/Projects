@@ -60,6 +60,13 @@ export class Batch<T = number> {
     this.c.push(tmpC.r, tmpC.g, tmpC.b);
     if (owner !== undefined) this.owner.push(owner);
   }
+  /** Добавить экземпляр с готовой мировой матрицей (наклонные планки и т. п.). */
+  addMatrix(color: string, m: THREE.Matrix4, owner?: T) {
+    for (let i = 0; i < 16; i++) this.m.push(m.elements[i]);
+    tmpC.set(color);
+    this.c.push(tmpC.r, tmpC.g, tmpC.b);
+    if (owner !== undefined) this.owner.push(owner);
+  }
   get count() {
     return this.c.length / 3;
   }

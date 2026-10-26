@@ -178,6 +178,55 @@ export function rackContext(w: Warehouse, r: Rack): RackContext {
 /** Тип ячеек яруса. */
 export const tierCellType = (r: Rack, t: Tier): CellType => t.cellType ?? RACK_SPEC[r.kind].cell;
 
+/** Объединения ячеек стеллажа (из настроек ячеек), проверенные и без пересечений. */
+export interface MergePlan {
+  /** Основная ячейка `с.я.м` → сколько мест справа и ярусов выше в неё вошло */
+  mains: Map<string, { right: number; up: number }>;
+  /** Поглощённая ячейка → основная */
+  absorbed: Map<string, string>;
+  /** Снятые балки `секция.ярус` — под ярусом, объединённым с нижним на всю ширину секции */
+  noBeam: Set<string>;
+  problems: string[];
+}
+
+const placeName = (s: number, t: number, p: number) => `секция ${s}, ярус ${t}, место ${p}`;
+
+export function mergePlan(r: Rack): MergePlan {
+  const plan: MergePlan = { mains: new Map(), absorbed: new Map(), noBeam: new Set(), problems: [] };
+  const wanted = Object.entries(r.overrides)
+    .filter(([, ov]) => (ov.mergeRight ?? 0) > 0 || (ov.mergeUp ?? 0) > 0)
+    .map(([key, ov]) => {
+      const [s, t, p] = key.split('.').map(Number);
+      return { key, s, t, p, ov };
+    })
+    .sort((a, b) => a.s - b.s || a.t - b.t || a.p - b.p);
+  for (const { key, s, t, p, ov } of wanted) {
+    const tier = r.tiers[t - 1];
+    if (!tier || s > r.sections || p > tier.cells) continue;
+    // У консольного стеллажа места — стороны А и Б: их не объединить
+    const right = r.kind === 'cantilever' ? 0 : Math.min(Math.floor(ov.mergeRight ?? 0), tier.cells - p);
+    // Вверх — только ярусы с тем же делением на ячейки: иначе границы ячеек не совпадут
+    let up = 0;
+    while (up < Math.floor(ov.mergeUp ?? 0) && r.tiers[t + up]?.cells === tier.cells) up++;
+    if (up < Math.floor(ov.mergeUp ?? 0))
+      plan.problems.push(
+        `Объединение (${placeName(s, t, p)}) — вверх только до яруса ${t + up}: выше другое число ячеек`,
+      );
+    if (!right && !up) continue;
+    const covered: string[] = [];
+    for (let dt = 0; dt <= up; dt++)
+      for (let dp = 0; dp <= right; dp++) if (dt || dp) covered.push(cellKey(s, t + dt, p + dp));
+    if (plan.absorbed.has(key) || covered.some((k) => plan.absorbed.has(k) || plan.mains.has(k))) {
+      plan.problems.push(`Объединение (${placeName(s, t, p)}) пересекается с другим — не применено`);
+      continue;
+    }
+    plan.mains.set(key, { right, up });
+    for (const k of covered) plan.absorbed.set(k, key);
+    if (right + 1 === tier.cells) for (let dt = 1; dt <= up; dt++) plan.noBeam.add(`${s}.${t + dt}`);
+  }
+  return plan;
+}
+
 /** Строит ячейки стеллажа: размеры Ш×Г×В, тип, места, нагрузка и положение в 3D. */
 export function rackCells(w: Warehouse, r: Rack, ctx = rackContext(w, r)): Cell[] {
   const spec = RACK_SPEC[r.kind];
@@ -186,6 +235,8 @@ export function rackCells(w: Warehouse, r: Rack, ctx = rackContext(w, r)): Cell[
   const bases = tierBases(r);
   const hazard = !!(ctx.zone?.hazard || ctx.zone?.type === 'hazard' || ctx.room?.hazard);
   const cells: Cell[] = [];
+  /** Положение ячейки в координатах стеллажа (мм) — для объединённых ячеек */
+  const local = new Map<string, { lx: number; lz: number; cw: number; cd: number }>();
   for (let s = 1; s <= r.sections; s++) {
     const sectionStart = -L / 2 + spec.upright + (s - 1) * (r.sectionLength + spec.upright);
     r.tiers.forEach((tier, ti) => {
@@ -219,6 +270,7 @@ export function rackCells(w: Warehouse, r: Rack, ctx = rackContext(w, r)): Cell[
         const type = ov?.cellType ?? tierCellType(r, tier);
         const bottom = ctx.base + bases[ti] / 1000;
         const pos = localToPlan(r.x, r.y, r.rotation, lx / 1000, lz / 1000);
+        local.set(key, { lx, lz, cw, cd });
         cells.push({
           key: `${r.id}:${key}`,
           address: formatAddress(w.addressTemplate, w.pad, {
@@ -253,6 +305,49 @@ export function rackCells(w: Warehouse, r: Rack, ctx = rackContext(w, r)): Cell[
           bottom,
         });
       }
+    });
+  }
+  const plan = mergePlan(r);
+  if (!plan.mains.size) return cells;
+  const byKey = new Map(cells.map((c) => [`${c.section}.${c.tier}.${c.pos}`, c]));
+  for (const [key, { right, up }] of plan.mains) {
+    const c = byKey.get(key)!;
+    const ov = r.overrides[key];
+    const tier = r.tiers[c.tier - 1];
+    // Габарит объединённой ячейки — по крайним вошедшим в неё местам; высота — с бывшими балками
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let z0 = Infinity;
+    let z1 = -Infinity;
+    for (let dp = 0; dp <= right; dp++) {
+      const g = local.get(cellKey(c.section, c.tier, c.pos + dp))!;
+      [x0, x1] = [Math.min(x0, g.lx - g.cw / 2), Math.max(x1, g.lx + g.cw / 2)];
+      [z0, z1] = [Math.min(z0, g.lz - g.cd / 2), Math.max(z1, g.lz + g.cd / 2)];
+    }
+    const top = c.tier - 1 + up;
+    const height = bases[top] + r.tiers[top].height - bases[c.tier - 1];
+    const pos = localToPlan(r.x, r.y, r.rotation, (x0 + x1) / 2000, (z0 + z1) / 2000);
+    Object.assign(c, {
+      width: Math.round(x1 - x0),
+      depth: Math.round(z1 - z0),
+      height,
+      maxLoad: ov?.maxLoad ?? tier.maxLoad * (right + 1),
+      places:
+        ov?.places ??
+        (tier.places !== undefined ? tier.places * (right + 1) : defaultPlaces(c.cellType, x1 - x0, z1 - z0, height)),
+      cx: pos.x,
+      cy: c.bottom + height / 2000,
+      cz: pos.y,
+      merged: { right, up },
+    });
+  }
+  for (const [key, main] of plan.absorbed) {
+    const c = byKey.get(key)!;
+    const into = byKey.get(main)!;
+    Object.assign(c, {
+      blocked: true,
+      mergedInto: into.key,
+      note: r.overrides[key]?.note ?? `Объединена с ${into.address}`,
     });
   }
   return cells;
@@ -378,6 +473,7 @@ export function rackFrame(r: Rack): Frame {
     const x = -L / 2 + U / 2 + i * (S + U);
     for (const z of [-D / 2 + Ud / 2, D / 2 - Ud / 2]) f.posts.push({ x, y: H / 2, z, sx: U, sy: H, sz: Ud });
   }
+  const { noBeam } = mergePlan(r);
   for (let s = 0; s < r.sections; s++) {
     const x = -L / 2 + U + s * (S + U) + S / 2;
     if (r.kind === 'cylinder') {
@@ -391,6 +487,8 @@ export function rackFrame(r: Rack): Frame {
     }
     bases.forEach((base, ti) => {
       if (ti === 0 && r.groundLevel) return;
+      // Ярус объединён с нижним на всю ширину секции — балки под ним нет
+      if (noBeam.has(`${s + 1}.${ti + 1}`)) return;
       if (spec.beamDepth === 0) {
         // Полочный стеллаж — сплошная полка на всю глубину
         f.panels.push({ x, y: base - B / 2, z: 0, sx: S, sy: B, sz: D });
@@ -433,6 +531,7 @@ export function rackWarnings(w: Warehouse, r: Rack): string[] {
   if (!mezz && !polygonInside(rackFootprint(r), zone.points, 0.05)) {
     out.push('Стеллаж выходит за границы зоны');
   }
+  out.push(...mergePlan(r).problems);
   const cellsLoad = r.sections * r.tiers.reduce((s, t) => s + t.cells * t.maxLoad, 0);
   if (r.maxLoad && cellsLoad > r.maxLoad * 1.0001) {
     out.push(

@@ -1801,6 +1801,10 @@ input[type='number']::-webkit-inner-spin-button {
   background: var(--accent-soft);
   color: var(--accent-text);
 }
+.badge.merged {
+  background: #8b5cf626;
+  color: #a78bfa;
+}
 .badge.ok {
   background: var(--ok-soft);
   color: var(--ok);
@@ -2708,6 +2712,9 @@ input[type='number']::-webkit-inner-spin-button {
 .f2-cell.reserved {
   border-color: #38bdf8;
   border-style: dashed;
+}
+.f2-cell.merged {
+  border: 2px solid #8b5cf6;
 }
 .f2-cell.lv-critical {
   box-shadow: inset 0 0 0 2px #e5484d;
@@ -3817,6 +3824,9 @@ input[type='number']::-webkit-inner-spin-button {
 }
 .lg.reserved {
   border: 1px dashed #38bdf8;
+}
+.lg.merged {
+  border: 2px solid #8b5cf6;
 }
 .lg.crit {
   box-shadow: inset 0 0 0 2px #e5484d;

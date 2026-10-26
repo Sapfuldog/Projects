@@ -7,6 +7,35 @@ import { toCSV } from '../../lib/snapshot';
 import { RackFacade } from '../RackMap';
 import { Check, Hint, Num, Section, Select, Text, Warn, download } from '../ui';
 
+/** Ячейка вошла в объединённую: её свойства — у объединённой, здесь — перейти к ней или разъединить. */
+function MergedPart({ cell, main }: { cell: Cell; main: Cell }) {
+  const w = useWarehouse()!;
+  const st = useStore.getState;
+  const rack = w.racks.find((r) => r.id === main.rackId)!;
+  const key = cellKey(main.section, main.tier, main.pos);
+  return (
+    <Section title={`Ячейка ${cell.address}`}>
+      <p>
+        Входит в объединённую ячейку <b className="mono">{main.address}</b> ({main.width} × {main.depth} × {main.height}{' '}
+        мм): отдельно не используется и заблокирована.
+      </p>
+      <div className="chips">
+        <button className="btn small" onClick={() => st().select({ kind: 'cell', id: main.key, rackId: main.rackId })}>
+          Открыть {main.address}
+        </button>
+        <button
+          className="btn small"
+          onClick={() =>
+            st().setCellOverride(rack.id, key, { ...rack.overrides[key], mergeRight: undefined, mergeUp: undefined })
+          }
+        >
+          Разъединить
+        </button>
+      </div>
+    </Section>
+  );
+}
+
 function CellEditor({ cell }: { cell: Cell }) {
   const w = useWarehouse()!;
   const consumers = useConsumers();
@@ -17,6 +46,10 @@ function CellEditor({ cell }: { cell: Cell }) {
   const tier = rack.tiers[cell.tier - 1];
   const set = (patch: Partial<CellOverride>) => st().setCellOverride(rack.id, key, { ...ov, ...patch });
   const auto = defaultPlaces(cell.cellType, cell.width, cell.depth, cell.height);
+  // Сколько можно забрать: места справа до края секции; ярусы выше — с тем же делением на ячейки
+  const maxRight = rack.kind === 'cantilever' ? 0 : tier.cells - cell.pos;
+  let maxUp = 0;
+  while (rack.tiers[cell.tier + maxUp]?.cells === tier.cells) maxUp++;
   return (
     <Section
       title={`Ячейка ${cell.address}`}
@@ -86,6 +119,36 @@ function CellEditor({ cell }: { cell: Cell }) {
         onChange={(v) => set({ blocked: v || undefined })}
       />
       <Text label="Примечание" value={ov.note ?? ''} onChange={(v) => set({ note: v || undefined })} />
+      {(maxRight > 0 || maxUp > 0) && (
+        <>
+          <div className="field-label">Объединить с соседними — увеличить ячейку за счёт соседних</div>
+          <div className="grid2">
+            <Num
+              label="Ячеек справа"
+              value={ov.mergeRight ?? 0}
+              min={0}
+              max={maxRight}
+              disabled={!maxRight}
+              onChange={(v) => set({ mergeRight: Math.round(v) || undefined, places: undefined })}
+            />
+            <Num
+              label="Ярусов вверх"
+              value={ov.mergeUp ?? 0}
+              min={0}
+              max={maxUp}
+              disabled={!maxUp}
+              onChange={(v) => set({ mergeUp: Math.round(v) || undefined, places: undefined })}
+            />
+          </div>
+          {cell.merged && (
+            <Hint>
+              Сейчас {cell.width} × {cell.depth} × {cell.height} мм, мест {cell.places}, нагрузка {cell.maxLoad} кг.
+              Соседние ячейки вошли в эту и заблокированы
+              {cell.merged.up && cell.merged.right + 1 === tier.cells ? '; балки между ярусами в секции сняты' : ''}.
+            </Hint>
+          )}
+        </>
+      )}
       <Hint>
         Принимает: {CELL_TYPES[cell.cellType].accepts.join(', ')}. Изменения свойств сразу проверяются правилами
         «Контроля».
@@ -126,6 +189,7 @@ export function CellsPanel() {
         c.places,
         c.blocked ? 'да' : '',
         c.reservedFor ?? '',
+        c.mergedInto ? (byKey.get(c.mergedInto)?.address ?? '') : '',
       ];
     });
     download(
@@ -147,6 +211,7 @@ export function CellsPanel() {
           'Мест',
           'Блок',
           'Закреплена',
+          'Объединена с',
         ],
         rows,
       ),
@@ -213,14 +278,23 @@ export function CellsPanel() {
               </span>
             ))}
           </div>
-          <Hint>Щёлкните ячейку, чтобы задать её тип, число мест, нагрузку, блокировку или закрепить за кладовой.</Hint>
+          <Hint>
+            Щёлкните ячейку, чтобы задать её тип, число мест, нагрузку, блокировку, объединить с соседними или закрепить
+            за кладовой.
+          </Hint>
         </Section>
       ) : (
         <Section title="Стеллаж">
           <p className="muted">Выберите стеллаж на 3D или плане.</p>
         </Section>
       )}
-      {cell && !cell.virtual && <CellEditor cell={cell} />}
+      {cell &&
+        !cell.virtual &&
+        (cell.mergedInto && byKey.get(cell.mergedInto) ? (
+          <MergedPart cell={cell} main={byKey.get(cell.mergedInto)!} />
+        ) : (
+          <CellEditor cell={cell} />
+        ))}
     </>
   );
 }

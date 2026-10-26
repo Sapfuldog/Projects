@@ -91,7 +91,16 @@ export function RackFacade({
   highlight?: Set<string>;
 }) {
   const byKey = new Map(cells.map((c) => [`${c.section}.${c.tier}.${c.pos}`, c]));
+  const byCellKey = new Map(cells.map((c) => [c.key, c]));
   const bases = tierBases(rack);
+  // Высота строки яруса на карте (и зазор между строками) — объединённая вверх ячейка перекрывает строки выше
+  const rowHeight = (ti: number) => (compact ? 11 : Math.max(30, Math.min(64, rack.tiers[ti].height / 28)));
+  const rowGap = compact ? 1 : 3;
+  const reach = (c: Cell) => {
+    let h = 0;
+    for (let k = 1; k <= (c.merged?.up ?? 0); k++) h += rowHeight(c.tier - 1 + k) + rowGap;
+    return h;
+  };
   const across = RACK_SPEC[rack.kind].across;
   const tiers = rack.tiers.map((t, i) => ({ t, i })).reverse();
   const load = m.loads.get(rack.id);
@@ -123,11 +132,7 @@ export function RackFacade({
         </div>
       )}
       {tiers.map(({ t, i }) => (
-        <div
-          key={i}
-          className="f2-row"
-          style={compact ? undefined : { minHeight: Math.max(30, Math.min(64, t.height / 28)) }}
-        >
+        <div key={i} className="f2-row" style={compact ? undefined : { minHeight: rowHeight(i) }}>
           {!compact && (
             <span
               className="f2-tier"
@@ -142,6 +147,12 @@ export function RackFacade({
               {Array.from({ length: t.cells }, (_, p) => {
                 const c = byKey.get(`${s + 1}.${i + 1}.${p + 1}`);
                 if (!c) return <i key={p} className="f2-cell none" />;
+                if (c.mergedInto) {
+                  // Вошла в объединённую: на том же ярусе её место занимает объединённая, выше — пусто под ней
+                  const main = byCellKey.get(c.mergedInto);
+                  return main?.tier === c.tier ? null : <i key={p} className="f2-cell none" />;
+                }
+                const up = reach(c);
                 const f = m.fill.get(c.address) ?? 0;
                 const u = m.usage.get(c.address);
                 const tone = cellTone(c, m, mode);
@@ -150,6 +161,7 @@ export function RackFacade({
                 const cls = [
                   'f2-cell',
                   c.blocked ? 'blocked' : '',
+                  c.merged ? 'merged' : '',
                   c.reservedFor ? 'reserved' : '',
                   selectedKey === c.key ? 'sel' : '',
                   lvl ? `lv-${lvl}` : '',
@@ -159,9 +171,12 @@ export function RackFacade({
                   <button
                     key={p}
                     className={cls}
+                    style={
+                      c.merged ? { flex: c.merged.right + 1, ...(up ? { marginTop: -up, zIndex: 1 } : {}) } : undefined
+                    }
                     onClick={onPick ? () => onPick(c) : undefined}
                     title={[
-                      `${c.address} · ${CELL_TYPES[c.cellType].title} · ${pct(f)}${c.places ? ` · мест ${Math.min(u?.places ?? 0, 999)}/${c.places}` : ''}${c.blocked ? ' · заблокирована' : ''}`,
+                      `${c.address} · ${CELL_TYPES[c.cellType].title} · ${pct(f)}${c.places ? ` · мест ${Math.min(u?.places ?? 0, 999)}/${c.places}` : ''}${c.blocked ? ' · заблокирована' : ''}${c.merged ? ` · объединённая ${c.width}×${c.height} мм` : ''}`,
                       ...(content.length ? content : [f > 0 ? 'состав не передан' : 'свободна']),
                     ].join('\n')}
                   >

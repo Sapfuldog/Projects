@@ -8,6 +8,33 @@ import { Batch, Instances, baseMatrix, noRaycast, type SceneInfo } from './commo
 import { useHover } from './Labels';
 
 const GAP = 0.04;
+/** Толщина планок креста на заблокированных ячейках и рамки объединённых, м */
+const BAR = 0.045;
+const BLOCKED = '#ef4444';
+const MERGED = '#8b5cf6';
+const FACE = new THREE.Vector3(0, 0, 1);
+const tmpM = new THREE.Matrix4();
+const tmpQ = new THREE.Quaternion();
+const tmpV = new THREE.Vector3();
+const tmpS = new THREE.Vector3();
+
+/** Красный крест на передней и задней грани заблокированной ячейки — видно и за грузом, и издалека. */
+function blockedCross(b: Batch, w: number, h: number, d: number, base: THREE.Matrix4) {
+  const len = Math.hypot(w, h) - BAR;
+  const a = Math.atan2(h, w);
+  for (const z of [d / 2 + 0.012, -d / 2 - 0.012])
+    for (const sign of [1, -1]) {
+      tmpM.compose(tmpV.set(0, h / 2, z), tmpQ.setFromAxisAngle(FACE, sign * a), tmpS.set(len, BAR, 0.012));
+      b.addMatrix(BLOCKED, tmpM.premultiply(base));
+    }
+}
+
+/** Рамка по рёбрам объединённой ячейки: видно, какие места стали одной ячейкой. */
+function mergedFrame(b: Batch, w: number, h: number, d: number, base: THREE.Matrix4) {
+  for (const y of [0, h]) for (const z of [-d / 2, d / 2]) b.add(MERGED, 0, y, z, w + BAR, BAR, BAR, base);
+  for (const x of [-w / 2, w / 2]) for (const z of [-d / 2, d / 2]) b.add(MERGED, x, h / 2, z, BAR, h, BAR, base);
+  for (const x of [-w / 2, w / 2]) for (const y of [0, h]) b.add(MERGED, x, y, 0, BAR, BAR, d, base);
+}
 
 /** Ячейки: прозрачные объёмы (для наведения и выбора), груз по форме, подсветка и выбор. */
 export function CellsLayer({
@@ -40,8 +67,11 @@ export function CellsLayer({
   const volumes = useMemo(() => {
     const all = new Batch();
     const accent = new Batch();
+    const marks = new Batch();
     const base = new THREE.Matrix4();
     cells.forEach((c, i) => {
+      // Вошедшая в объединённую ячейку отдельно не рисуется — её место занимает объединённая
+      if (c.mergedInto) return;
       const y = c.bottom + lift(c.floorId);
       baseMatrix(c.cx, y, c.cz, c.rotY, base);
       const w = c.width / 1000 - GAP;
@@ -55,8 +85,10 @@ export function CellsLayer({
       else if (c.reservedFor && f === 0) accentColor = '#7dd3fc';
       else if (mode === 'fill' && f === 0) accentColor = '#4ade80';
       if (accentColor) accent.add(accentColor, 0, h / 2 + GAP / 2, 0, w, h, d, base);
+      if (c.blocked) blockedCross(marks, w, h, d, base);
+      else if (c.merged) mergedFrame(marks, w, h, d, base);
     });
-    return { all: all.arrays(), accent: accent.arrays() };
+    return { all: all.arrays(), accent: accent.arrays(), marks: marks.arrays(), owner: all.owner };
   }, [cells, monitor, lift, mode, selectedRackId]);
 
   const cargo = useMemo(() => {
@@ -110,9 +142,9 @@ export function CellsLayer({
         opacity={0.07}
         depthWrite={false}
         flat
-        onPick={(i, e) => onPick(cells[i], e)}
+        onPick={(i, e) => onPick(cells[volumes.owner[i]], e)}
         onHover={(i) => {
-          const c = i == null ? null : cells[i];
+          const c = i == null ? null : cells[volumes.owner[i]];
           if (useHover.getState().cell === c) return;
           setHover(c, c ? [c.cx, c.bottom + lift(c.floorId) + c.height / 1000, c.cz] : null);
         }}
@@ -125,6 +157,7 @@ export function CellsLayer({
         depthWrite={false}
         flat
       />
+      <Instances name="cell-status" matrices={volumes.marks.m} colors={volumes.marks.c} flat />
       {cargo && (
         <>
           <Instances name="cargo-boxes" matrices={cargo.boxes.m} colors={cargo.boxes.c} castShadow receiveShadow />
